@@ -5,10 +5,10 @@ param()
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
-[System.Windows.Forms.Application]::EnableVisualStyles()
 
 $StudioRoot = Join-Path $env:LOCALAPPDATA "Programs\ClawCode\studio"
 $SettingsPath = Join-Path $StudioRoot "settings.json"
@@ -19,25 +19,32 @@ if (-not (Test-Path -LiteralPath $StudioRoot)) {
 }
 
 $script:CurrentProcess = $null
-$script:ActiveOutputBox = $null
+$script:ActiveOutputControl = $null
 $script:StdOutPath = ""
 $script:StdErrPath = ""
 $script:StdOutPosition = 0L
 $script:StdErrPosition = 0L
+$script:ProjectPath = ""
+$script:CurrentThreadTitle = "Claw Code installieren"
 
-$script:Colors = @{
-    Window = [System.Drawing.Color]::FromArgb(20, 24, 31)
-    Sidebar = [System.Drawing.Color]::FromArgb(14, 17, 22)
-    Panel = [System.Drawing.Color]::FromArgb(24, 29, 38)
-    PanelSoft = [System.Drawing.Color]::FromArgb(31, 37, 48)
-    Border = [System.Drawing.Color]::FromArgb(54, 64, 82)
-    Foreground = [System.Drawing.Color]::FromArgb(232, 237, 243)
-    Muted = [System.Drawing.Color]::FromArgb(144, 156, 175)
-    Accent = [System.Drawing.Color]::FromArgb(97, 168, 255)
-    AccentSoft = [System.Drawing.Color]::FromArgb(39, 64, 99)
-    Success = [System.Drawing.Color]::FromArgb(92, 214, 128)
-    Warning = [System.Drawing.Color]::FromArgb(255, 195, 86)
-    Error = [System.Drawing.Color]::FromArgb(255, 117, 117)
+$script:Theme = @{
+    Window = "#171717"
+    Sidebar = "#202428"
+    SidebarSoft = "#262B30"
+    Panel = "#1E1E1E"
+    PanelSoft = "#252526"
+    Border = "#33373D"
+    Foreground = "#F3F4F6"
+    Muted = "#A1A1AA"
+    Accent = "#FFFFFF"
+    AccentSoft = "#2F3640"
+    Blue = "#60A5FA"
+    Green = "#34D399"
+    Yellow = "#FBBF24"
+    Red = "#F87171"
+    UserBubble = "#2A2A2D"
+    AssistantBubble = "#202124"
+    Composer = "#2B2B2E"
 }
 
 function Get-Settings {
@@ -192,580 +199,440 @@ function Read-NewText {
     }
 }
 
-function New-FlatButton {
-    param(
-        [string]$Text,
-        [int]$Width = 120,
-        [int]$Height = 36,
-        [System.Drawing.Color]$BackColor = $script:Colors.PanelSoft,
-        [System.Drawing.Color]$ForeColor = $script:Colors.Foreground
-    )
+function Get-GitBranch {
+    param([string]$Path)
 
-    $button = New-Object System.Windows.Forms.Button
-    $button.Text = $Text
-    $button.Size = New-Object System.Drawing.Size($Width, $Height)
-    $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $button.FlatAppearance.BorderSize = 1
-    $button.FlatAppearance.BorderColor = $script:Colors.Border
-    $button.BackColor = $BackColor
-    $button.ForeColor = $ForeColor
-    $button.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9.5, [System.Drawing.FontStyle]::Regular)
-    $button.Cursor = [System.Windows.Forms.Cursors]::Hand
-    $button.UseVisualStyleBackColor = $false
-    return $button
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return "master"
+    }
+
+    try {
+        $branch = (& git -C $Path branch --show-current 2>$null | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($branch)) {
+            return "master"
+        }
+        return $branch
+    } catch {
+        return "master"
+    }
 }
 
-function New-SectionLabel {
-    param([string]$Text)
+[xml]$xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Claw Studio"
+        Width="1600"
+        Height="920"
+        MinWidth="1280"
+        MinHeight="780"
+        Background="#171717"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI">
+  <Grid Background="#171717">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="72"/>
+      <ColumnDefinition Width="320"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
 
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = $Text
-    $label.ForeColor = $script:Colors.Muted
-    $label.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 8.5)
-    $label.AutoSize = $true
-    return $label
+    <Border Grid.Column="0" Background="#1F2428" BorderBrush="#2A2F33" BorderThickness="0,0,1,0">
+      <DockPanel Margin="0">
+        <StackPanel DockPanel.Dock="Top" Margin="12,14,12,0">
+          <Button x:Name="LogoButton" Content="◧" Height="34" Margin="0,0,0,16" Background="Transparent" BorderBrush="Transparent" Foreground="#E5E7EB" FontSize="16" Cursor="Hand"/>
+          <Button x:Name="NewChatNavButton" Content="✎" Height="40" Margin="0,0,0,8" Background="Transparent" BorderBrush="Transparent" Foreground="#E5E7EB" FontSize="16" Cursor="Hand"/>
+          <Button x:Name="SearchNavButton" Content="⌕" Height="40" Margin="0,0,0,8" Background="Transparent" BorderBrush="Transparent" Foreground="#A1A1AA" FontSize="16" Cursor="Hand"/>
+          <Button x:Name="PluginsNavButton" Content="◫" Height="40" Margin="0,0,0,8" Background="Transparent" BorderBrush="Transparent" Foreground="#A1A1AA" FontSize="16" Cursor="Hand"/>
+          <Button x:Name="AutomationNavButton" Content="◷" Height="40" Margin="0,0,0,8" Background="Transparent" BorderBrush="Transparent" Foreground="#A1A1AA" FontSize="16" Cursor="Hand"/>
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Bottom" Margin="12,0,12,16">
+          <Button x:Name="SettingsNavButton" Content="⚙" Height="40" Background="Transparent" BorderBrush="Transparent" Foreground="#A1A1AA" FontSize="15" Cursor="Hand"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Border Grid.Column="1" Background="#21262B" BorderBrush="#2A2F33" BorderThickness="0,0,1,0">
+      <Grid Margin="16,14,16,14">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+          <TextBlock Text="Neuer Chat" Foreground="#E5E7EB" FontSize="16" FontWeight="SemiBold"/>
+          <TextBlock Text="Suche" Foreground="#D4D4D8" FontSize="16" Margin="0,14,0,0"/>
+          <TextBlock Text="Plugins" Foreground="#D4D4D8" FontSize="16" Margin="0,14,0,0"/>
+          <TextBlock Text="Automatisierungen" Foreground="#D4D4D8" FontSize="16" Margin="0,14,0,0"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,28,0,0">
+          <TextBlock Text="Projekte" Foreground="#71717A" FontSize="14" FontWeight="SemiBold"/>
+          <Border Background="#2A3138" CornerRadius="14" Padding="14,10" Margin="0,12,0,0">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock x:Name="ProjectNameText" Text="claw" Foreground="#E5E7EB" FontSize="18" FontWeight="SemiBold"/>
+                <TextBlock x:Name="ProjectPathText" Text="C:\Users\frede\Desktop\claw" Foreground="#A1A1AA" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"/>
+              </StackPanel>
+              <Button x:Name="ProjectChooseButton" Grid.Column="1" Content="✎" Width="28" Height="28" Margin="12,0,0,0" Background="Transparent" BorderBrush="Transparent" Foreground="#D4D4D8" Cursor="Hand"/>
+            </Grid>
+          </Border>
+        </StackPanel>
+
+        <Grid Grid.Row="2" Margin="0,18,0,0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+
+          <ListBox x:Name="ThreadList" Grid.Row="0"
+                   Background="Transparent"
+                   BorderThickness="0"
+                   Foreground="#E5E7EB"
+                   FontSize="14"
+                   ScrollViewer.VerticalScrollBarVisibility="Auto">
+            <ListBoxItem Content="Claw Code installieren" IsSelected="True"/>
+            <ListBoxItem Content="Erstelle Lead-Lag-Analysetool"/>
+            <ListBoxItem Content="Refaktorieren AstroModNet..."/>
+            <ListBoxItem Content="Watchface nach Bild ergänz..."/>
+          </ListBox>
+
+          <StackPanel Grid.Row="1" Margin="0,16,0,0">
+            <Button x:Name="ProjectAttachButton" Content="Projekt anheften" Height="40" Margin="0,0,0,8" Background="#2A2F35" BorderBrush="#3A4148" Foreground="#F3F4F6"/>
+            <Button x:Name="ProjectOpenButton" Content="Im Explorer öffnen" Height="40" Margin="0,0,0,8" Background="#2A2F35" BorderBrush="#3A4148" Foreground="#F3F4F6"/>
+            <Button x:Name="NewThreadButton" Content="Neuen Chat starten" Height="40" Margin="0,0,0,8" Background="#2A2F35" BorderBrush="#3A4148" Foreground="#F3F4F6"/>
+            <Button x:Name="RemoveThreadButton" Content="Chat zurücksetzen" Height="40" Background="#2A2F35" BorderBrush="#3A4148" Foreground="#F3F4F6"/>
+          </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Margin="0,14,0,0">
+          <TextBlock Text="Einstellungen" Foreground="#71717A" FontSize="13" FontWeight="SemiBold"/>
+          <ComboBox x:Name="ModelComboBox" Margin="0,10,0,8" Height="36" Background="#2A2F35" Foreground="#F3F4F6" BorderBrush="#3A4148" SelectedIndex="1">
+            <ComboBoxItem Content="openai/qwen2.5-coder:7b"/>
+            <ComboBoxItem Content="openai/qwen2.5-coder:14b"/>
+            <ComboBoxItem Content="openai/qwen2.5-coder:32b"/>
+            <ComboBoxItem Content="openai/llama3.2"/>
+          </ComboBox>
+          <ComboBox x:Name="PermissionComboBox" Height="36" Background="#2A2F35" Foreground="#F3F4F6" BorderBrush="#3A4148" SelectedIndex="1">
+            <ComboBoxItem Content="read-only"/>
+            <ComboBoxItem Content="workspace-write"/>
+            <ComboBoxItem Content="danger-full-access"/>
+          </ComboBox>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="2" Background="#171717">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+
+      <Border Grid.Row="0" Background="#171717" Padding="28,18,28,14">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock x:Name="ThreadTitleText" Text="Claw Code installieren" Foreground="#F3F4F6" FontSize="21" FontWeight="SemiBold"/>
+            <TextBlock x:Name="ThreadSubtitleText" Text="5m 2s lang gearbeitet" Foreground="#A1A1AA" FontSize="13" Margin="0,8,0,0"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+            <Border x:Name="StatusPill" Background="#1F4A34" CornerRadius="14" Padding="14,8" Margin="0,0,12,0">
+              <TextBlock x:Name="StatusPillText" Text="Ready" Foreground="#86EFAC" FontWeight="SemiBold"/>
+            </Border>
+            <Button x:Name="HeaderRunButton" Content="▶" Width="36" Height="36" Background="#2A2F35" BorderBrush="#3A4148" Foreground="#F3F4F6"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <ScrollViewer x:Name="ConversationScrollViewer" Grid.Row="1" Margin="28,0,28,18" VerticalScrollBarVisibility="Auto" Background="Transparent">
+        <StackPanel x:Name="ConversationStack"/>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Margin="28,0,28,18" Background="#2B2B2E" CornerRadius="24" Padding="18,14,18,12" BorderBrush="#3A4148" BorderThickness="1">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+
+          <DockPanel Grid.Row="0" LastChildFill="True">
+            <Button x:Name="AttachButton" Content="+" Width="36" Height="36" Margin="0,0,12,0" Background="#3A3A3F" BorderBrush="#4A4A4F" Foreground="#F3F4F6" FontSize="18"/>
+            <TextBox x:Name="PromptTextBox"
+                     Background="Transparent"
+                     Foreground="#F3F4F6"
+                     BorderThickness="0"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto"
+                     FontSize="15"
+                     MinHeight="84"/>
+          </DockPanel>
+
+          <Grid Grid.Row="1" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <ComboBox x:Name="FooterPermissionComboBox" Grid.Column="0" Width="170" Height="34" Background="#2A2F35" Foreground="#F3F4F6" BorderBrush="#3A4148" Margin="0,0,12,0"/>
+            <Button x:Name="TerminalButton" Grid.Column="1" Content="Terminal" Width="96" Height="34" Background="Transparent" BorderBrush="Transparent" Foreground="#A1A1AA"/>
+            <TextBlock x:Name="ModelFooterText" Grid.Column="3" Text="5.4 Mittel" VerticalAlignment="Center" Foreground="#D4D4D8" Margin="0,0,14,0"/>
+            <Button x:Name="MicButton" Grid.Column="4" Content="◌" Width="30" Height="30" Background="Transparent" BorderBrush="Transparent" Foreground="#A1A1AA"/>
+            <Button x:Name="SendButton" Grid.Column="5" Content="↑" Width="42" Height="42" Background="#F3F4F6" BorderBrush="#F3F4F6" Foreground="#171717" FontSize="18" FontWeight="Bold" Margin="0,0,0,0"/>
+          </Grid>
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="3" Background="#171717" Padding="28,0,28,14">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" x:Name="WorkspaceModeText" Text="Lokal arbeiten" Foreground="#D4D4D8" Margin="0,0,18,0"/>
+          <TextBlock Grid.Column="1" x:Name="BranchText" Text="master" Foreground="#D4D4D8" Margin="0,0,18,0"/>
+          <TextBlock Grid.Column="2" x:Name="BinaryPathText" Text="claw.exe" Foreground="#71717A"/>
+        </Grid>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>
+"@
+
+$reader = New-Object System.Xml.XmlNodeReader $xaml
+$window = [Windows.Markup.XamlReader]::Load($reader)
+
+function Get-Control {
+    param([string]$Name)
+    return $window.FindName($Name)
 }
 
-$form = New-Object System.Windows.Forms.Form
-$form.Text = "Claw Studio"
-$form.StartPosition = "CenterScreen"
-$form.Size = New-Object System.Drawing.Size(1420, 920)
-$form.MinimumSize = New-Object System.Drawing.Size(1160, 760)
-$form.BackColor = $script:Colors.Window
-$form.ForeColor = $script:Colors.Foreground
-$form.KeyPreview = $true
-
-$sidebar = New-Object System.Windows.Forms.Panel
-$sidebar.Dock = [System.Windows.Forms.DockStyle]::Left
-$sidebar.Width = 292
-$sidebar.BackColor = $script:Colors.Sidebar
-$sidebar.Padding = New-Object System.Windows.Forms.Padding(18, 18, 18, 18)
-$form.Controls.Add($sidebar)
-
-$mainPanel = New-Object System.Windows.Forms.Panel
-$mainPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
-$mainPanel.BackColor = $script:Colors.Window
-$mainPanel.Padding = New-Object System.Windows.Forms.Padding(18, 18, 18, 18)
-$form.Controls.Add($mainPanel)
-
-$brandLabel = New-Object System.Windows.Forms.Label
-$brandLabel.Text = "Claw Studio"
-$brandLabel.ForeColor = $script:Colors.Foreground
-$brandLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 18)
-$brandLabel.AutoSize = $true
-$brandLabel.Location = New-Object System.Drawing.Point(0, 0)
-$sidebar.Controls.Add($brandLabel)
-
-$brandSubLabel = New-Object System.Windows.Forms.Label
-$brandSubLabel.Text = "Closer to Codex: chat first, project scoped, less setup noise."
-$brandSubLabel.ForeColor = $script:Colors.Muted
-$brandSubLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
-$brandSubLabel.MaximumSize = New-Object System.Drawing.Size(240, 0)
-$brandSubLabel.AutoSize = $true
-$brandSubLabel.Location = New-Object System.Drawing.Point(0, 38)
-$sidebar.Controls.Add($brandSubLabel)
-
-$threadsSection = New-Object System.Windows.Forms.Panel
-$threadsSection.BackColor = $script:Colors.Panel
-$threadsSection.Location = New-Object System.Drawing.Point(0, 96)
-$threadsSection.Size = New-Object System.Drawing.Size(254, 184)
-$threadsSection.Padding = New-Object System.Windows.Forms.Padding(12)
-$sidebar.Controls.Add($threadsSection)
-
-$threadsLabel = New-SectionLabel "THREADS"
-$threadsLabel.Location = New-Object System.Drawing.Point(12, 12)
-$threadsSection.Controls.Add($threadsLabel)
-
-$threadList = New-Object System.Windows.Forms.ListBox
-$threadList.Location = New-Object System.Drawing.Point(12, 38)
-$threadList.Size = New-Object System.Drawing.Size(224, 95)
-$threadList.BackColor = $script:Colors.PanelSoft
-$threadList.ForeColor = $script:Colors.Foreground
-$threadList.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-$threadList.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
-$threadList.Items.AddRange(@(
-    "Current session",
-    "Analyze repository",
-    "Bug hunt",
-    "README draft"
-))
-$threadList.SelectedIndex = 0
-$threadsSection.Controls.Add($threadList)
-
-$newThreadButton = New-FlatButton -Text "New Thread" -Width 108 -Height 34
-$newThreadButton.Location = New-Object System.Drawing.Point(12, 142)
-$threadsSection.Controls.Add($newThreadButton)
-
-$reuseThreadButton = New-FlatButton -Text "Reuse Prompt" -Width 108 -Height 34
-$reuseThreadButton.Location = New-Object System.Drawing.Point(128, 142)
-$threadsSection.Controls.Add($reuseThreadButton)
-
-$projectSection = New-Object System.Windows.Forms.Panel
-$projectSection.BackColor = $script:Colors.Panel
-$projectSection.Location = New-Object System.Drawing.Point(0, 294)
-$projectSection.Size = New-Object System.Drawing.Size(254, 154)
-$projectSection.Padding = New-Object System.Windows.Forms.Padding(12)
-$sidebar.Controls.Add($projectSection)
-
-$projectSectionLabel = New-SectionLabel "PROJECT"
-$projectSectionLabel.Location = New-Object System.Drawing.Point(12, 12)
-$projectSection.Controls.Add($projectSectionLabel)
-
-$projectPathLabel = New-Object System.Windows.Forms.Label
-$projectPathLabel.Text = Get-DefaultProjectPath
-$projectPathLabel.ForeColor = $script:Colors.Foreground
-$projectPathLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
-$projectPathLabel.MaximumSize = New-Object System.Drawing.Size(224, 0)
-$projectPathLabel.AutoSize = $true
-$projectPathLabel.Location = New-Object System.Drawing.Point(12, 36)
-$projectSection.Controls.Add($projectPathLabel)
-
-$projectBrowseButton = New-FlatButton -Text "Choose Project" -Width 108 -Height 34
-$projectBrowseButton.Location = New-Object System.Drawing.Point(12, 102)
-$projectSection.Controls.Add($projectBrowseButton)
-
-$projectOpenButton = New-FlatButton -Text "Open Folder" -Width 104 -Height 34
-$projectOpenButton.Location = New-Object System.Drawing.Point(128, 102)
-$projectSection.Controls.Add($projectOpenButton)
-
-$settingsSection = New-Object System.Windows.Forms.Panel
-$settingsSection.BackColor = $script:Colors.Panel
-$settingsSection.Location = New-Object System.Drawing.Point(0, 462)
-$settingsSection.Size = New-Object System.Drawing.Size(254, 170)
-$settingsSection.Padding = New-Object System.Windows.Forms.Padding(12)
-$sidebar.Controls.Add($settingsSection)
-
-$settingsSectionLabel = New-SectionLabel "RUN SETTINGS"
-$settingsSectionLabel.Location = New-Object System.Drawing.Point(12, 12)
-$settingsSection.Controls.Add($settingsSectionLabel)
-
-$modelLabel = New-SectionLabel "MODEL"
-$modelLabel.Location = New-Object System.Drawing.Point(12, 38)
-$settingsSection.Controls.Add($modelLabel)
-
-$modelComboBox = New-Object System.Windows.Forms.ComboBox
-$modelComboBox.Location = New-Object System.Drawing.Point(12, 58)
-$modelComboBox.Size = New-Object System.Drawing.Size(224, 30)
-$modelComboBox.DropDownStyle = "DropDown"
-$modelComboBox.BackColor = $script:Colors.PanelSoft
-$modelComboBox.ForeColor = $script:Colors.Foreground
-$modelComboBox.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$modelComboBox.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
-[void]$modelComboBox.Items.Add("openai/qwen2.5-coder:7b")
-[void]$modelComboBox.Items.Add("openai/qwen2.5-coder:14b")
-[void]$modelComboBox.Items.Add("openai/qwen2.5-coder:32b")
-[void]$modelComboBox.Items.Add("openai/llama3.2")
-$modelComboBox.Text = Get-DefaultModel
-$settingsSection.Controls.Add($modelComboBox)
-
-$permissionLabel = New-SectionLabel "PERMISSION"
-$permissionLabel.Location = New-Object System.Drawing.Point(12, 100)
-$settingsSection.Controls.Add($permissionLabel)
-
-$permissionComboBox = New-Object System.Windows.Forms.ComboBox
-$permissionComboBox.Location = New-Object System.Drawing.Point(12, 120)
-$permissionComboBox.Size = New-Object System.Drawing.Size(224, 30)
-$permissionComboBox.DropDownStyle = "DropDownList"
-$permissionComboBox.BackColor = $script:Colors.PanelSoft
-$permissionComboBox.ForeColor = $script:Colors.Foreground
-$permissionComboBox.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$permissionComboBox.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
-[void]$permissionComboBox.Items.Add("read-only")
-[void]$permissionComboBox.Items.Add("workspace-write")
-[void]$permissionComboBox.Items.Add("danger-full-access")
-$permissionComboBox.SelectedItem = Get-DefaultPermissionMode
-$settingsSection.Controls.Add($permissionComboBox)
-
-$actionsSection = New-Object System.Windows.Forms.Panel
-$actionsSection.BackColor = $script:Colors.Panel
-$actionsSection.Location = New-Object System.Drawing.Point(0, 646)
-$actionsSection.Size = New-Object System.Drawing.Size(254, 246)
-$actionsSection.Padding = New-Object System.Windows.Forms.Padding(12)
-$sidebar.Controls.Add($actionsSection)
-
-$actionsLabel = New-SectionLabel "QUICK ACTIONS"
-$actionsLabel.Location = New-Object System.Drawing.Point(12, 12)
-$actionsSection.Controls.Add($actionsLabel)
-
-$analyzeButton = New-FlatButton -Text "Analyze Repository" -Width 224 -Height 38
-$analyzeButton.Location = New-Object System.Drawing.Point(12, 38)
-$actionsSection.Controls.Add($analyzeButton)
-
-$bugsButton = New-FlatButton -Text "Find Bugs" -Width 224 -Height 38
-$bugsButton.Location = New-Object System.Drawing.Point(12, 84)
-$actionsSection.Controls.Add($bugsButton)
-
-$improveButton = New-FlatButton -Text "Plan Improvements" -Width 224 -Height 38
-$improveButton.Location = New-Object System.Drawing.Point(12, 130)
-$actionsSection.Controls.Add($improveButton)
-
-$doctorButton = New-FlatButton -Text "Run Doctor" -Width 108 -Height 34
-$doctorButton.Location = New-Object System.Drawing.Point(12, 184)
-$actionsSection.Controls.Add($doctorButton)
-
-$versionButton = New-FlatButton -Text "Version" -Width 108 -Height 34
-$versionButton.Location = New-Object System.Drawing.Point(128, 184)
-$actionsSection.Controls.Add($versionButton)
-
-$topBar = New-Object System.Windows.Forms.Panel
-$topBar.Dock = [System.Windows.Forms.DockStyle]::Top
-$topBar.Height = 76
-$topBar.BackColor = $script:Colors.Window
-$mainPanel.Controls.Add($topBar)
-
-$titleLabel = New-Object System.Windows.Forms.Label
-$titleLabel.Text = "Current Thread"
-$titleLabel.ForeColor = $script:Colors.Foreground
-$titleLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 18)
-$titleLabel.AutoSize = $true
-$titleLabel.Location = New-Object System.Drawing.Point(0, 0)
-$topBar.Controls.Add($titleLabel)
-
-$subtitleLabel = New-Object System.Windows.Forms.Label
-$subtitleLabel.Text = "Use a project folder, then talk to Claw like an agent instead of filling a form."
-$subtitleLabel.ForeColor = $script:Colors.Muted
-$subtitleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$subtitleLabel.AutoSize = $true
-$subtitleLabel.Location = New-Object System.Drawing.Point(2, 34)
-$topBar.Controls.Add($subtitleLabel)
-
-$statusPill = New-Object System.Windows.Forms.Label
-$statusPill.Text = " Ready "
-$statusPill.ForeColor = $script:Colors.Success
-$statusPill.BackColor = [System.Drawing.Color]::FromArgb(22, 54, 38)
-$statusPill.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9)
-$statusPill.AutoSize = $true
-$statusPill.Padding = New-Object System.Windows.Forms.Padding(10, 6, 10, 6)
-$statusPill.Location = New-Object System.Drawing.Point(960, 12)
-$topBar.Controls.Add($statusPill)
-
-$metaLabel = New-Object System.Windows.Forms.Label
-$metaLabel.Text = "Model: $($modelComboBox.Text)   |   Mode: $($permissionComboBox.SelectedItem)"
-$metaLabel.ForeColor = $script:Colors.Muted
-$metaLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$metaLabel.AutoSize = $true
-$metaLabel.Location = New-Object System.Drawing.Point(760, 46)
-$topBar.Controls.Add($metaLabel)
-
-$conversationPanel = New-Object System.Windows.Forms.Panel
-$conversationPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
-$conversationPanel.BackColor = $script:Colors.Panel
-$conversationPanel.Padding = New-Object System.Windows.Forms.Padding(1)
-$mainPanel.Controls.Add($conversationPanel)
-
-$conversationScrollPanel = New-Object System.Windows.Forms.Panel
-$conversationScrollPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
-$conversationScrollPanel.BackColor = $script:Colors.Panel
-$conversationScrollPanel.AutoScroll = $true
-$conversationPanel.Controls.Add($conversationScrollPanel)
-
-$conversationFlow = New-Object System.Windows.Forms.FlowLayoutPanel
-$conversationFlow.Dock = [System.Windows.Forms.DockStyle]::Top
-$conversationFlow.AutoSize = $true
-$conversationFlow.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
-$conversationFlow.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
-$conversationFlow.WrapContents = $false
-$conversationFlow.Padding = New-Object System.Windows.Forms.Padding(18, 18, 18, 18)
-$conversationFlow.BackColor = $script:Colors.Panel
-$conversationScrollPanel.Controls.Add($conversationFlow)
-
-$composerPanel = New-Object System.Windows.Forms.Panel
-$composerPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
-$composerPanel.Height = 196
-$composerPanel.BackColor = $script:Colors.Window
-$composerPanel.Padding = New-Object System.Windows.Forms.Padding(0, 18, 0, 0)
-$mainPanel.Controls.Add($composerPanel)
-
-$composerContainer = New-Object System.Windows.Forms.Panel
-$composerContainer.Dock = [System.Windows.Forms.DockStyle]::Fill
-$composerContainer.BackColor = $script:Colors.Panel
-$composerContainer.Padding = New-Object System.Windows.Forms.Padding(14)
-$composerPanel.Controls.Add($composerContainer)
-
-$promptTextBox = New-Object System.Windows.Forms.TextBox
-$promptTextBox.Multiline = $true
-$promptTextBox.AcceptsReturn = $true
-$promptTextBox.AcceptsTab = $true
-$promptTextBox.ScrollBars = "Vertical"
-$promptTextBox.BackColor = $script:Colors.Panel
-$promptTextBox.ForeColor = $script:Colors.Foreground
-$promptTextBox.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-$promptTextBox.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$promptTextBox.Location = New-Object System.Drawing.Point(14, 14)
-$promptTextBox.Size = New-Object System.Drawing.Size(780, 116)
-$promptTextBox.Text = "Summarize this repository. Explain the architecture, build flow, and the first improvement you would make."
-$composerContainer.Controls.Add($promptTextBox)
-
-$composerHint = New-Object System.Windows.Forms.Label
-$composerHint.Text = "Enter for newline, Ctrl+Enter to run"
-$composerHint.ForeColor = $script:Colors.Muted
-$composerHint.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$composerHint.AutoSize = $true
-$composerHint.Location = New-Object System.Drawing.Point(14, 140)
-$composerContainer.Controls.Add($composerHint)
-
-$sendButton = New-FlatButton -Text "Send Prompt" -Width 150 -Height 42 -BackColor $script:Colors.AccentSoft
-$sendButton.Location = New-Object System.Drawing.Point(828, 18)
-$composerContainer.Controls.Add($sendButton)
-
-$clearButton = New-FlatButton -Text "Clear Thread" -Width 150 -Height 36
-$clearButton.Location = New-Object System.Drawing.Point(828, 68)
-$composerContainer.Controls.Add($clearButton)
-
-$readmeButton = New-FlatButton -Text "Draft README" -Width 150 -Height 36
-$readmeButton.Location = New-Object System.Drawing.Point(828, 112)
-$composerContainer.Controls.Add($readmeButton)
-
-$terminalButton = New-FlatButton -Text "Terminal" -Width 96 -Height 36
-$terminalButton.Location = New-Object System.Drawing.Point(986, 18)
-$composerContainer.Controls.Add($terminalButton)
-
-$ollamaButton = New-FlatButton -Text "Ollama" -Width 96 -Height 36
-$ollamaButton.Location = New-Object System.Drawing.Point(986, 62)
-$composerContainer.Controls.Add($ollamaButton)
-
-$stopButton = New-FlatButton -Text "Stop" -Width 96 -Height 36 -BackColor ([System.Drawing.Color]::FromArgb(74, 41, 47)) -ForeColor $script:Colors.Error
-$stopButton.Location = New-Object System.Drawing.Point(986, 106)
-$stopButton.Enabled = $false
-$composerContainer.Controls.Add($stopButton)
-
-$clawPathLabel = New-Object System.Windows.Forms.Label
-$clawPathLabel.Text = Find-ClawBinary
-$clawPathLabel.ForeColor = $script:Colors.Muted
-$clawPathLabel.Font = New-Object System.Drawing.Font("Consolas", 8.75)
-$clawPathLabel.AutoEllipsis = $true
-$clawPathLabel.Size = New-Object System.Drawing.Size(320, 32)
-$clawPathLabel.Location = New-Object System.Drawing.Point(828, 152)
-$composerContainer.Controls.Add($clawPathLabel)
+$LogoButton = Get-Control "LogoButton"
+$NewChatNavButton = Get-Control "NewChatNavButton"
+$SearchNavButton = Get-Control "SearchNavButton"
+$PluginsNavButton = Get-Control "PluginsNavButton"
+$AutomationNavButton = Get-Control "AutomationNavButton"
+$SettingsNavButton = Get-Control "SettingsNavButton"
+$ProjectNameText = Get-Control "ProjectNameText"
+$ProjectPathText = Get-Control "ProjectPathText"
+$ProjectChooseButton = Get-Control "ProjectChooseButton"
+$ProjectAttachButton = Get-Control "ProjectAttachButton"
+$ProjectOpenButton = Get-Control "ProjectOpenButton"
+$NewThreadButton = Get-Control "NewThreadButton"
+$RemoveThreadButton = Get-Control "RemoveThreadButton"
+$ThreadList = Get-Control "ThreadList"
+$ThreadTitleText = Get-Control "ThreadTitleText"
+$ThreadSubtitleText = Get-Control "ThreadSubtitleText"
+$ConversationScrollViewer = Get-Control "ConversationScrollViewer"
+$ConversationStack = Get-Control "ConversationStack"
+$PromptTextBox = Get-Control "PromptTextBox"
+$SendButton = Get-Control "SendButton"
+$AttachButton = Get-Control "AttachButton"
+$ModelComboBox = Get-Control "ModelComboBox"
+$PermissionComboBox = Get-Control "PermissionComboBox"
+$FooterPermissionComboBox = Get-Control "FooterPermissionComboBox"
+$TerminalButton = Get-Control "TerminalButton"
+$MicButton = Get-Control "MicButton"
+$HeaderRunButton = Get-Control "HeaderRunButton"
+$StatusPill = Get-Control "StatusPill"
+$StatusPillText = Get-Control "StatusPillText"
+$ModelFooterText = Get-Control "ModelFooterText"
+$WorkspaceModeText = Get-Control "WorkspaceModeText"
+$BranchText = Get-Control "BranchText"
+$BinaryPathText = Get-Control "BinaryPathText"
 
 $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
 $folderBrowser.Description = "Choose the project folder Claw should work in"
 
-$pollTimer = New-Object System.Windows.Forms.Timer
-$pollTimer.Interval = 250
+$dispatcherTimer = New-Object System.Windows.Threading.DispatcherTimer
+$dispatcherTimer.Interval = [TimeSpan]::FromMilliseconds(250)
 
-function Append-Conversation {
+function Get-ComboValue {
+    param($ComboBox)
+    if ($ComboBox.SelectedItem -is [System.Windows.Controls.ComboBoxItem]) {
+        return [string]$ComboBox.SelectedItem.Content
+    }
+    return [string]$ComboBox.Text
+}
+
+function Sync-PermissionCombo {
+    $FooterPermissionComboBox.Items.Clear()
+    foreach ($item in $PermissionComboBox.Items) {
+        $copy = New-Object System.Windows.Controls.ComboBoxItem
+        $copy.Content = $item.Content
+        [void]$FooterPermissionComboBox.Items.Add($copy)
+    }
+    $FooterPermissionComboBox.SelectedIndex = $PermissionComboBox.SelectedIndex
+}
+
+Sync-PermissionCombo
+
+function Set-Status {
+    param(
+        [string]$Text,
+        [string]$ForegroundHex,
+        [string]$BackgroundHex
+    )
+
+    $StatusPillText.Text = $Text
+    $StatusPill.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString($BackgroundHex)
+    $StatusPillText.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString($ForegroundHex)
+}
+
+function Scroll-To-Bottom {
+    $window.Dispatcher.Invoke([action]{
+        $ConversationScrollViewer.ScrollToEnd()
+    }, [System.Windows.Threading.DispatcherPriority]::Background)
+}
+
+function New-MessageBubble {
     param(
         [string]$Role,
         [string]$Text,
-        [System.Drawing.Color]$RoleColor = $script:Colors.Accent,
-        [bool]$IsUser = $false
+        [string]$RoleColor,
+        [bool]$IsUser = $false,
+        [bool]$UseMono = $false
     )
 
-    if ([string]::IsNullOrWhiteSpace($Text)) {
-        return
+    $outer = New-Object System.Windows.Controls.Grid
+    $outer.Margin = [System.Windows.Thickness]::new(0,0,0,16)
+
+    $border = New-Object System.Windows.Controls.Border
+    $border.CornerRadius = [System.Windows.CornerRadius]::new(18)
+    $border.Padding = [System.Windows.Thickness]::new(18,14,18,14)
+    $border.MaxWidth = 900
+    $border.Background = [System.Windows.Media.BrushConverter]::new().ConvertFromString($(if ($IsUser) { $script:Theme.UserBubble } else { $script:Theme.AssistantBubble }))
+    $border.BorderBrush = [System.Windows.Media.BrushConverter]::new().ConvertFromString($script:Theme.Border)
+    $border.BorderThickness = [System.Windows.Thickness]::new(1)
+    $border.HorizontalAlignment = $(if ($IsUser) { "Right" } else { "Left" })
+
+    $stack = New-Object System.Windows.Controls.StackPanel
+
+    $roleBlock = New-Object System.Windows.Controls.TextBlock
+    $roleBlock.Text = $Role
+    $roleBlock.FontWeight = "SemiBold"
+    $roleBlock.FontSize = 13
+    $roleBlock.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString($RoleColor)
+    $stack.Children.Add($roleBlock) | Out-Null
+
+    $body = New-Object System.Windows.Controls.TextBlock
+    $body.Text = $Text
+    $body.TextWrapping = "Wrap"
+    $body.Margin = [System.Windows.Thickness]::new(0,8,0,0)
+    $body.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString($script:Theme.Foreground)
+    $body.FontSize = 14
+    if ($UseMono) {
+        $body.FontFamily = "Cascadia Mono"
     }
+    $stack.Children.Add($body) | Out-Null
 
-    $availableWidth = [int]$conversationScrollPanel.ClientSize.Width
-    if ($availableWidth -le 0) {
-        $availableWidth = 980
+    $border.Child = $stack
+    $outer.Children.Add($border) | Out-Null
+    return @{
+        Container = $outer
+        TextBlock = $body
     }
+}
 
-    $wrapWidth = [int][Math]::Max(($availableWidth - 40), 760)
-    $bubbleWrap = New-Object System.Windows.Forms.Panel
-    $bubbleWrap.Width = $wrapWidth
-    $bubbleWrap.Height = 10
-    $bubbleWrap.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 14)
-    $bubbleWrap.BackColor = $script:Colors.Panel
+function Add-Conversation {
+    param(
+        [string]$Role,
+        [string]$Text,
+        [string]$RoleColor,
+        [bool]$IsUser = $false,
+        [bool]$UseMono = $false
+    )
 
-    $bubble = New-Object System.Windows.Forms.Panel
-    $bubbleWidth = [int][Math]::Min([Math]::Max([int]($wrapWidth * 0.72), 460), 860)
-    $bubble.Width = $bubbleWidth
-    $bubble.BackColor = $(if ($IsUser) { $script:Colors.AccentSoft } else { $script:Colors.PanelSoft })
-    $bubble.Padding = New-Object System.Windows.Forms.Padding(14, 12, 14, 12)
-    $bubble.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $bubbleX = 0
-    if ($IsUser) {
-        $bubbleX = [int]($wrapWidth - $bubbleWidth - 8)
-        if ($bubbleX -lt 0) {
-            $bubbleX = 0
-        }
-    }
-    $bubble.Location = New-Object System.Drawing.Point($bubbleX, 0)
-
-    $roleLabel = New-Object System.Windows.Forms.Label
-    $roleLabel.Text = $Role
-    $roleLabel.ForeColor = $RoleColor
-    $roleLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9.5)
-    $roleLabel.AutoSize = $true
-    $roleLabel.Location = New-Object System.Drawing.Point(14, 12)
-    $bubble.Controls.Add($roleLabel)
-
-    $bodyLabel = New-Object System.Windows.Forms.Label
-    $bodyLabel.Text = $Text
-    $bodyLabel.ForeColor = $script:Colors.Foreground
-    $bodyLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-    $bodyMaxWidth = [int]($bubbleWidth - 32)
-    if ($bodyMaxWidth -lt 120) {
-        $bodyMaxWidth = 120
-    }
-    $bodyLabel.MaximumSize = New-Object System.Drawing.Size($bodyMaxWidth, 0)
-    $bodyLabel.AutoSize = $true
-    $bodyLabel.Location = New-Object System.Drawing.Point(14, 36)
-    $bubble.Controls.Add($bodyLabel)
-
-    $bubble.Height = [int]($bodyLabel.Bottom + 14)
-    $bubbleWrap.Height = $bubble.Height
-    $bubbleWrap.Controls.Add($bubble)
-    $conversationFlow.Controls.Add($bubbleWrap)
-    $conversationScrollPanel.ScrollControlIntoView($bubbleWrap)
+    $message = New-MessageBubble -Role $Role -Text $Text -RoleColor $RoleColor -IsUser:$IsUser -UseMono:$UseMono
+    $ConversationStack.Children.Add($message.Container) | Out-Null
+    Scroll-To-Bottom
+    return $message
 }
 
 function Start-AssistantStream {
     param([string]$Title)
 
-    $availableWidth = [int]$conversationScrollPanel.ClientSize.Width
-    if ($availableWidth -le 0) {
-        $availableWidth = 980
-    }
-
-    $wrapWidth = [int][Math]::Max(($availableWidth - 40), 760)
-    $bubbleWrap = New-Object System.Windows.Forms.Panel
-    $bubbleWrap.Width = $wrapWidth
-    $bubbleWrap.Height = 220
-    $bubbleWrap.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 14)
-    $bubbleWrap.BackColor = $script:Colors.Panel
-
-    $bubble = New-Object System.Windows.Forms.Panel
-    $bubbleWidth = [int][Math]::Min([Math]::Max([int]($wrapWidth * 0.78), 520), 920)
-    $bubble.Width = $bubbleWidth
-    $bubble.Height = 220
-    $bubble.BackColor = $script:Colors.PanelSoft
-    $bubble.Padding = New-Object System.Windows.Forms.Padding(14, 12, 14, 12)
-    $bubble.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $bubble.Location = New-Object System.Drawing.Point(0, 0)
-
-    $roleLabel = New-Object System.Windows.Forms.Label
-    $roleLabel.Text = "Claw"
-    $roleLabel.ForeColor = $script:Colors.Success
-    $roleLabel.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 9.5)
-    $roleLabel.AutoSize = $true
-    $roleLabel.Location = New-Object System.Drawing.Point(14, 12)
-    $bubble.Controls.Add($roleLabel)
-
-    $titleLabel = New-Object System.Windows.Forms.Label
-    $titleLabel.Text = $Title
-    $titleLabel.ForeColor = $script:Colors.Muted
-    $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    $titleLabel.AutoSize = $true
-    $titleLabel.Location = New-Object System.Drawing.Point(62, 13)
-    $bubble.Controls.Add($titleLabel)
-
-    $outputBox = New-Object System.Windows.Forms.TextBox
-    $outputBox.Multiline = $true
-    $outputBox.ScrollBars = "Vertical"
-    $outputBox.ReadOnly = $true
-    $outputBox.WordWrap = $true
-    $outputBox.BorderStyle = [System.Windows.Forms.BorderStyle]::None
-    $outputBox.BackColor = $script:Colors.PanelSoft
-    $outputBox.ForeColor = $script:Colors.Foreground
-    $outputBox.Font = New-Object System.Drawing.Font("Cascadia Mono", 9.25)
-    $outputBox.Location = New-Object System.Drawing.Point(14, 40)
-    $outputWidth = [int]($bubbleWidth - 32)
-    if ($outputWidth -lt 120) {
-        $outputWidth = 120
-    }
-    $outputBox.Size = New-Object System.Drawing.Size($outputWidth, 160)
-    $bubble.Controls.Add($outputBox)
-
-    $bubbleWrap.Controls.Add($bubble)
-    $conversationFlow.Controls.Add($bubbleWrap)
-    $conversationScrollPanel.ScrollControlIntoView($bubbleWrap)
-    $script:ActiveOutputBox = $outputBox
+    $message = Add-Conversation -Role "Claw" -Text "$Title`r`n" -RoleColor $script:Theme.Green -UseMono:$true
+    $script:ActiveOutputControl = $message.TextBlock
 }
 
 function Append-StreamText {
     param([string]$Text)
 
-    if ([string]::IsNullOrEmpty($Text)) {
-        return
-    }
-
-    if ($script:ActiveOutputBox) {
-        $script:ActiveOutputBox.AppendText($Text)
-        $script:ActiveOutputBox.SelectionStart = $script:ActiveOutputBox.TextLength
-        $script:ActiveOutputBox.ScrollToCaret()
+    if ($script:ActiveOutputControl -and -not [string]::IsNullOrEmpty($Text)) {
+        $script:ActiveOutputControl.Text += $Text
+        Scroll-To-Bottom
     }
 }
 
-function Set-Status {
-    param(
-        [string]$Text,
-        [System.Drawing.Color]$Foreground,
-        [System.Drawing.Color]$Background
-    )
-
-    $statusPill.Text = " $Text "
-    $statusPill.ForeColor = $Foreground
-    $statusPill.BackColor = $Background
+function Refresh-ProjectState {
+    $leaf = Split-Path -Leaf $script:ProjectPath
+    if ([string]::IsNullOrWhiteSpace($leaf)) {
+        $leaf = "claw"
+    }
+    $ProjectNameText.Text = $leaf
+    $ProjectPathText.Text = $script:ProjectPath
+    $BranchText.Text = Get-GitBranch -Path $script:ProjectPath
+    $BinaryPathText.Text = Find-ClawBinary
+    $ModelFooterText.Text = "$(Get-ComboValue -ComboBox $ModelComboBox)"
 }
 
-function Refresh-Meta {
-    $metaLabel.Text = "Model: $($modelComboBox.Text)   |   Mode: $($permissionComboBox.SelectedItem)"
-    $projectPathLabel.Text = $projectTextBox
+function Save-CurrentSettings {
+    Save-Settings -ProjectPath $script:ProjectPath -Model (Get-ComboValue -ComboBox $ModelComboBox) -PermissionMode (Get-ComboValue -ComboBox $PermissionComboBox)
 }
 
 function Set-UiBusy {
     param([bool]$Busy)
 
-    $projectBrowseButton.Enabled = -not $Busy
-    $projectOpenButton.Enabled = -not $Busy
-    $modelComboBox.Enabled = -not $Busy
-    $permissionComboBox.Enabled = -not $Busy
-    $analyzeButton.Enabled = -not $Busy
-    $bugsButton.Enabled = -not $Busy
-    $improveButton.Enabled = -not $Busy
-    $doctorButton.Enabled = -not $Busy
-    $versionButton.Enabled = -not $Busy
-    $terminalButton.Enabled = -not $Busy
-    $ollamaButton.Enabled = -not $Busy
-    $sendButton.Enabled = -not $Busy
-    $readmeButton.Enabled = -not $Busy
-    $clearButton.Enabled = -not $Busy
-    $stopButton.Enabled = $Busy
+    $ProjectChooseButton.IsEnabled = -not $Busy
+    $ProjectOpenButton.IsEnabled = -not $Busy
+    $NewThreadButton.IsEnabled = -not $Busy
+    $ThreadList.IsEnabled = -not $Busy
+    $ModelComboBox.IsEnabled = -not $Busy
+    $PermissionComboBox.IsEnabled = -not $Busy
+    $FooterPermissionComboBox.IsEnabled = -not $Busy
+    $SendButton.IsEnabled = -not $Busy
+    $TerminalButton.IsEnabled = -not $Busy
+    $HeaderRunButton.IsEnabled = -not $Busy
 }
 
-function Update-ProjectPath {
-    param([string]$Path)
-
-    $script:ProjectPath = $Path
-    $projectPathLabel.Text = $Path
-    Save-Settings -ProjectPath $Path -Model $modelComboBox.Text.Trim() -PermissionMode ([string]$permissionComboBox.SelectedItem)
+function Update-ThreadTitle {
+    param([string]$Title)
+    $script:CurrentThreadTitle = $Title
+    $ThreadTitleText.Text = $Title
 }
 
 function Validate-RunContext {
     $clawBinary = Find-ClawBinary
-    $clawPathLabel.Text = $clawBinary
-
     if ([string]::IsNullOrWhiteSpace($clawBinary) -or -not (Test-Path -LiteralPath $clawBinary)) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "claw.exe was not found. Run setup.bat first, then reopen Claw Studio.",
-            "Claw Studio",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Warning
-        ) | Out-Null
+        [System.Windows.MessageBox]::Show("claw.exe was not found. Run setup.bat first, then reopen Claw Studio.", "Claw Studio") | Out-Null
         return $false
     }
 
-    $projectPath = [string]$script:ProjectPath
-    if ([string]::IsNullOrWhiteSpace($projectPath) -or -not (Test-Path -LiteralPath $projectPath)) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "Choose a valid project folder first.",
-            "Claw Studio",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Warning
-        ) | Out-Null
+    if ([string]::IsNullOrWhiteSpace($script:ProjectPath) -or -not (Test-Path -LiteralPath $script:ProjectPath)) {
+        [System.Windows.MessageBox]::Show("Choose a valid project folder first.", "Claw Studio") | Out-Null
         return $false
     }
 
-    if (Test-BroadProjectPath -Path $projectPath) {
-        $choice = [System.Windows.Forms.MessageBox]::Show(
-            "That folder is too broad. Pick a real project folder instead when possible.`n`nContinue anyway?",
-            "Claw Studio",
-            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-            [System.Windows.Forms.MessageBoxIcon]::Question
-        )
-        if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+    if (Test-BroadProjectPath -Path $script:ProjectPath) {
+        $result = [System.Windows.MessageBox]::Show("That folder is very broad. Pick a real project folder instead when possible.`n`nContinue anyway?", "Claw Studio", "YesNo", "Warning")
+        if ($result -ne [System.Windows.MessageBoxResult]::Yes) {
             return $false
         }
     }
@@ -782,12 +649,7 @@ function Start-Command {
     )
 
     if ($script:CurrentProcess -and -not $script:CurrentProcess.HasExited) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "A task is already running. Stop it first or wait until it finishes.",
-            "Claw Studio",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information
-        ) | Out-Null
+        [System.Windows.MessageBox]::Show("A task is already running. Stop it first or wait until it finishes.", "Claw Studio") | Out-Null
         return
     }
 
@@ -798,8 +660,8 @@ function Start-Command {
     "" | Set-Content -LiteralPath $script:StdOutPath -Encoding UTF8
     "" | Set-Content -LiteralPath $script:StdErrPath -Encoding UTF8
 
-    Append-Conversation -Role "Task" -Text "$Label`r`nProject: $WorkingDirectory`r`nCommand: $Executable $($Arguments -join ' ')" -RoleColor $script:Colors.Warning
-    Start-AssistantStream -Title $Label
+    Add-Conversation -Role "You" -Text $Label -RoleColor $script:Theme.Blue -IsUser:$true | Out-Null
+    Start-AssistantStream -Title "Running in $WorkingDirectory"
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $Executable
@@ -851,31 +713,54 @@ function Start-Command {
 
     $script:CurrentProcess = $process
     Set-UiBusy -Busy $true
-    Set-Status -Text "Running" -Foreground $script:Colors.Warning -Background ([System.Drawing.Color]::FromArgb(59, 47, 20))
-    $pollTimer.Start()
+    Set-Status -Text "Running" -ForegroundHex $script:Theme.Yellow -BackgroundHex "#493912"
+    $ThreadSubtitleText.Text = "arbeitet gerade..."
+    $dispatcherTimer.Start()
 }
 
 function Run-ClawCommand {
     param(
         [string[]]$Arguments,
-        [string]$Label
+        [string]$PromptText
     )
 
     if (-not (Validate-RunContext)) {
         return
     }
 
-    $projectPath = [System.IO.Path]::GetFullPath([string]$script:ProjectPath)
-    Save-Settings -ProjectPath $projectPath -Model $modelComboBox.Text.Trim() -PermissionMode ([string]$permissionComboBox.SelectedItem)
-    Start-Command -Executable (Find-ClawBinary) -Arguments $Arguments -WorkingDirectory $projectPath -Label $Label
+    Save-CurrentSettings
+    Refresh-ProjectState
+    Start-Command -Executable (Find-ClawBinary) -Arguments $Arguments -WorkingDirectory $script:ProjectPath -Label $PromptText
 }
 
+$settings = Get-Settings
 $script:ProjectPath = Get-DefaultProjectPath
-$projectPathLabel.Text = $script:ProjectPath
-$metaLabel.Text = "Model: $($modelComboBox.Text)   |   Mode: $($permissionComboBox.SelectedItem)"
-$clawPathLabel.Text = Find-ClawBinary
 
-$pollTimer.Add_Tick({
+$modelValue = Get-DefaultModel
+for ($i = 0; $i -lt $ModelComboBox.Items.Count; $i++) {
+    if ([string]$ModelComboBox.Items[$i].Content -eq $modelValue) {
+        $ModelComboBox.SelectedIndex = $i
+        break
+    }
+}
+
+$permissionValue = Get-DefaultPermissionMode
+for ($i = 0; $i -lt $PermissionComboBox.Items.Count; $i++) {
+    if ([string]$PermissionComboBox.Items[$i].Content -eq $permissionValue) {
+        $PermissionComboBox.SelectedIndex = $i
+        break
+    }
+}
+Sync-PermissionCombo
+
+$PromptTextBox.Text = "Analyze this repository. Explain the architecture, build flow, dependencies, risky areas, and the first improvement you would make."
+Refresh-ProjectState
+Update-ThreadTitle -Title $script:CurrentThreadTitle
+ThreadSubtitleText.Text = "bereit"
+Add-Conversation -Role "System" -Text "Claw Studio is ready. Pick a project folder, then use the composer below like a chat input." -RoleColor $script:Theme.Muted | Out-Null
+Add-Conversation -Role "Tip" -Text "Start inside a real repo folder, not your whole user directory. Press Ctrl+Enter to send." -RoleColor $script:Theme.Yellow | Out-Null
+
+$dispatcherTimer.Add_Tick({
     if ($script:StdOutPath) {
         $newOut = Read-NewText -Path $script:StdOutPath -Position ([ref]$script:StdOutPosition)
         if (-not [string]::IsNullOrEmpty($newOut)) {
@@ -891,14 +776,17 @@ $pollTimer.Add_Tick({
     }
 
     if ($script:CurrentProcess -and $script:CurrentProcess.HasExited) {
-        $pollTimer.Stop()
+        $dispatcherTimer.Stop()
         $exitCode = $script:CurrentProcess.ExitCode
-        Append-Conversation -Role "Status" -Text "Process finished with exit code $exitCode." -RoleColor ($(if ($exitCode -eq 0) { $script:Colors.Success } else { $script:Colors.Error }))
-        $script:ActiveOutputBox = $null
+        $script:ActiveOutputControl = $null
         if ($exitCode -eq 0) {
-            Set-Status -Text "Ready" -Foreground $script:Colors.Success -Background ([System.Drawing.Color]::FromArgb(22, 54, 38))
+            Add-Conversation -Role "Status" -Text "Process finished successfully." -RoleColor $script:Theme.Green | Out-Null
+            Set-Status -Text "Ready" -ForegroundHex $script:Theme.Green -BackgroundHex "#1F4A34"
+            $ThreadSubtitleText.Text = "fertig"
         } else {
-            Set-Status -Text "Needs attention" -Foreground $script:Colors.Error -Background ([System.Drawing.Color]::FromArgb(68, 33, 39))
+            Add-Conversation -Role "Status" -Text "Process finished with exit code $exitCode." -RoleColor $script:Theme.Red | Out-Null
+            Set-Status -Text "Needs attention" -ForegroundHex $script:Theme.Red -BackgroundHex "#5A1F24"
+            $ThreadSubtitleText.Text = "beendet mit Fehler"
         }
         Set-UiBusy -Busy $false
         $script:CurrentProcess.Dispose()
@@ -906,175 +794,126 @@ $pollTimer.Add_Tick({
     }
 })
 
-$projectBrowseButton.Add_Click({
-    if (Test-Path -LiteralPath $script:ProjectPath) {
-        $folderBrowser.SelectedPath = $script:ProjectPath
-    }
-
-    if ($folderBrowser.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        Update-ProjectPath -Path $folderBrowser.SelectedPath
-    }
-})
-
-$projectOpenButton.Add_Click({
-    if (Test-Path -LiteralPath $script:ProjectPath) {
-        Start-Process explorer.exe -ArgumentList @($script:ProjectPath) | Out-Null
-    }
-})
-
-$modelComboBox.Add_TextChanged({
-    Save-Settings -ProjectPath $script:ProjectPath -Model $modelComboBox.Text.Trim() -PermissionMode ([string]$permissionComboBox.SelectedItem)
-    $metaLabel.Text = "Model: $($modelComboBox.Text)   |   Mode: $($permissionComboBox.SelectedItem)"
-})
-
-$permissionComboBox.Add_SelectedIndexChanged({
-    Save-Settings -ProjectPath $script:ProjectPath -Model $modelComboBox.Text.Trim() -PermissionMode ([string]$permissionComboBox.SelectedItem)
-    $metaLabel.Text = "Model: $($modelComboBox.Text)   |   Mode: $($permissionComboBox.SelectedItem)"
-})
-
 $sendAction = {
-    $prompt = $promptTextBox.Text.Trim()
+    $prompt = $PromptTextBox.Text.Trim()
     if ([string]::IsNullOrWhiteSpace($prompt)) {
         return
     }
 
-    Append-Conversation -Role "You" -Text $prompt -RoleColor $script:Colors.Accent -IsUser $true
-    $threadList.SelectedIndex = 0
     Run-ClawCommand -Arguments @(
-        "--model", $modelComboBox.Text.Trim(),
-        "--permission-mode", [string]$permissionComboBox.SelectedItem,
+        "--model", (Get-ComboValue -ComboBox $ModelComboBox),
+        "--permission-mode", (Get-ComboValue -ComboBox $PermissionComboBox),
         "prompt", $prompt
-    ) -Label "Custom prompt"
+    ) -PromptText $prompt
 }
 
-$sendButton.Add_Click($sendAction)
-
-$promptTextBox.Add_KeyDown({
-    if ($_.Control -and $_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
-        $_.SuppressKeyPress = $true
+$SendButton.Add_Click({ & $sendAction })
+$HeaderRunButton.Add_Click({ & $sendAction })
+$NewChatNavButton.Add_Click({
+    $ConversationStack.Children.Clear()
+    Update-ThreadTitle -Title "Neuer Chat"
+    $ThreadSubtitleText.Text = "gerade erstellt"
+    Add-Conversation -Role "System" -Text "Started a fresh chat." -RoleColor $script:Theme.Muted | Out-Null
+})
+$NewThreadButton.Add_Click({
+    $ConversationStack.Children.Clear()
+    Update-ThreadTitle -Title "Neuer Chat in $($ProjectNameText.Text)"
+    $ThreadSubtitleText.Text = "gerade erstellt"
+    Add-Conversation -Role "System" -Text "Started a fresh project chat." -RoleColor $script:Theme.Muted | Out-Null
+})
+$RemoveThreadButton.Add_Click({
+    $ConversationStack.Children.Clear()
+    Add-Conversation -Role "System" -Text "Chat reset. Settings stayed intact." -RoleColor $script:Theme.Muted | Out-Null
+})
+$ProjectChooseButton.Add_Click({
+    if (Test-Path -LiteralPath $script:ProjectPath) {
+        $folderBrowser.SelectedPath = $script:ProjectPath
+    }
+    if ($folderBrowser.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $script:ProjectPath = $folderBrowser.SelectedPath
+        Save-CurrentSettings
+        Refresh-ProjectState
+    }
+})
+$ProjectAttachButton.Add_Click({
+    [System.Windows.MessageBox]::Show("Project pinning is not implemented yet. The current project path is already active.", "Claw Studio") | Out-Null
+})
+$ProjectOpenButton.Add_Click({
+    if (Test-Path -LiteralPath $script:ProjectPath) {
+        Start-Process explorer.exe -ArgumentList @($script:ProjectPath) | Out-Null
+    }
+})
+$ThreadList.Add_SelectionChanged({
+    if ($ThreadList.SelectedItem -and $ThreadList.SelectedItem.Content) {
+        Update-ThreadTitle -Title ([string]$ThreadList.SelectedItem.Content)
+    }
+})
+$ModelComboBox.Add_SelectionChanged({
+    Save-CurrentSettings
+    $ModelFooterText.Text = Get-ComboValue -ComboBox $ModelComboBox
+})
+$PermissionComboBox.Add_SelectionChanged({
+    if ($FooterPermissionComboBox.SelectedIndex -ne $PermissionComboBox.SelectedIndex) {
+        $FooterPermissionComboBox.SelectedIndex = $PermissionComboBox.SelectedIndex
+    }
+    Save-CurrentSettings
+})
+$FooterPermissionComboBox.Add_SelectionChanged({
+    if ($PermissionComboBox.SelectedIndex -ne $FooterPermissionComboBox.SelectedIndex) {
+        $PermissionComboBox.SelectedIndex = $FooterPermissionComboBox.SelectedIndex
+    }
+    Save-CurrentSettings
+})
+$PromptTextBox.Add_KeyDown({
+    if ($_.Key -eq [System.Windows.Input.Key]::Enter -and ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control)) {
         $_.Handled = $true
         & $sendAction
     }
 })
-
-$analyzeButton.Add_Click({
-    $promptTextBox.Text = "Analyze this repository. Explain the architecture, build flow, dependencies, risky areas, and the first improvement you would make."
-    & $sendAction
-})
-
-$bugsButton.Add_Click({
-    $promptTextBox.Text = "Review this project for likely bugs, fragile flows, missing validation, and missing tests. Prioritize the most important findings first."
-    & $sendAction
-})
-
-$improveButton.Add_Click({
-    $promptTextBox.Text = "Create a short plan for the highest-value improvement in this repository, then explain why that order makes sense."
-    & $sendAction
-})
-
-$readmeButton.Add_Click({
-    $promptTextBox.Text = "Draft or improve the README for this repository. Cover purpose, install, run, and the key developer commands."
-    & $sendAction
-})
-
-$doctorButton.Add_Click({
-    Append-Conversation -Role "You" -Text "Run doctor for this setup." -RoleColor $script:Colors.Accent -IsUser $true
-    Run-ClawCommand -Arguments @("doctor") -Label "Run doctor"
-})
-
-$versionButton.Add_Click({
-    Append-Conversation -Role "You" -Text "Show the installed Claw version." -RoleColor $script:Colors.Accent -IsUser $true
-    Run-ClawCommand -Arguments @("--version") -Label "Show version"
-})
-
-$ollamaButton.Add_Click({
-    $ollama = Get-Command "ollama" -ErrorAction SilentlyContinue
-    if ($null -eq $ollama) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "ollama.exe was not found in PATH.",
-            "Claw Studio",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Warning
-        ) | Out-Null
-        return
-    }
-
-    Append-Conversation -Role "You" -Text "Show local Ollama models." -RoleColor $script:Colors.Accent -IsUser $true
-    Start-Command -Executable $ollama.Source -Arguments @("list") -WorkingDirectory $script:ProjectPath -Label "List Ollama models"
-})
-
-$terminalButton.Add_Click({
+$TerminalButton.Add_Click({
     if (-not (Validate-RunContext)) {
         return
     }
 
     $clawBinary = Find-ClawBinary
-    $projectPath = [System.IO.Path]::GetFullPath($script:ProjectPath)
-    Save-Settings -ProjectPath $projectPath -Model $modelComboBox.Text.Trim() -PermissionMode ([string]$permissionComboBox.SelectedItem)
-
     $command = "Set-Location -LiteralPath '{0}'; & '{1}' --model '{2}' --permission-mode '{3}'" -f `
-        $projectPath.Replace("'", "''"), `
+        $script:ProjectPath.Replace("'", "''"), `
         $clawBinary.Replace("'", "''"), `
-        $modelComboBox.Text.Trim().Replace("'", "''"), `
-        ([string]$permissionComboBox.SelectedItem).Replace("'", "''")
+        (Get-ComboValue -ComboBox $ModelComboBox).Replace("'", "''"), `
+        (Get-ComboValue -ComboBox $PermissionComboBox).Replace("'", "''")
 
-    Start-Process powershell.exe -ArgumentList @("-NoExit", "-Command", $command) -WorkingDirectory $projectPath | Out-Null
-    Append-Conversation -Role "Status" -Text "Opened an interactive Claw terminal in $projectPath." -RoleColor $script:Colors.Success
+    Start-Process powershell.exe -ArgumentList @("-NoExit", "-Command", $command) -WorkingDirectory $script:ProjectPath | Out-Null
+    Add-Conversation -Role "Status" -Text "Opened an interactive terminal in the current project." -RoleColor $script:Theme.Green | Out-Null
 })
-
-$clearButton.Add_Click({
-    $conversationFlow.Controls.Clear()
-    Append-Conversation -Role "System" -Text "Thread cleared. Settings stayed intact." -RoleColor $script:Colors.Muted
+$AttachButton.Add_Click({
+    [System.Windows.MessageBox]::Show("File attachment UI is not wired yet. Use the project folder as the main context for now.", "Claw Studio") | Out-Null
 })
-
-$stopButton.Add_Click({
+$MicButton.Add_Click({
+    [System.Windows.MessageBox]::Show("Voice input is not implemented yet.", "Claw Studio") | Out-Null
+})
+$SearchNavButton.Add_Click({
+    $PromptTextBox.Text = "Search this repository for the main entry points and explain how the code is organized."
+})
+$PluginsNavButton.Add_Click({
+    $PromptTextBox.Text = "List the likely extension points, plugin systems, or integration surfaces in this repository."
+})
+$AutomationNavButton.Add_Click({
+    $PromptTextBox.Text = "Look for recurring workflows in this repository that would benefit from automation."
+})
+$SettingsNavButton.Add_Click({
+    [System.Windows.MessageBox]::Show("Settings are currently stored locally in the Claw Studio settings.json file.", "Claw Studio") | Out-Null
+})
+$LogoButton.Add_Click({
+    $window.WindowState = $(if ($window.WindowState -eq "Maximized") { "Normal" } else { "Maximized" })
+})
+$window.Add_Closing({
+    Save-CurrentSettings
     if ($script:CurrentProcess -and -not $script:CurrentProcess.HasExited) {
-        try {
-            $script:CurrentProcess.Kill()
-            Append-Conversation -Role "Status" -Text "Stop requested." -RoleColor $script:Colors.Warning
-        } catch {
-            Append-Conversation -Role "Status" -Text ("Could not stop the running process: " + $_.Exception.Message) -RoleColor $script:Colors.Error
-        }
-    }
-})
-
-$newThreadButton.Add_Click({
-    $conversationFlow.Controls.Clear()
-    $threadList.SelectedIndex = 0
-    $titleLabel.Text = "Current Thread"
-    Append-Conversation -Role "System" -Text "Started a fresh thread. Settings stayed intact." -RoleColor $script:Colors.Muted
-})
-
-$reuseThreadButton.Add_Click({
-    switch ($threadList.SelectedItem) {
-        "Analyze repository" { $promptTextBox.Text = "Analyze this repository. Explain the architecture, build flow, dependencies, risky areas, and the first improvement you would make." }
-        "Bug hunt" { $promptTextBox.Text = "Review this project for likely bugs, fragile flows, missing validation, and missing tests. Prioritize the most important findings first." }
-        "README draft" { $promptTextBox.Text = "Draft or improve the README for this repository. Cover purpose, install, run, and the key developer commands." }
-        default { $promptTextBox.Text = "Summarize this repository. Explain the architecture, build flow, and the first improvement you would make." }
-    }
-})
-
-$threadList.Add_SelectedIndexChanged({
-    if ($threadList.SelectedItem) {
-        $titleLabel.Text = [string]$threadList.SelectedItem
-    }
-})
-
-$form.Add_FormClosing({
-    Save-Settings -ProjectPath $script:ProjectPath -Model $modelComboBox.Text.Trim() -PermissionMode ([string]$permissionComboBox.SelectedItem)
-    if ($script:CurrentProcess -and -not $script:CurrentProcess.HasExited) {
-        $choice = [System.Windows.Forms.MessageBox]::Show(
-            "A task is still running. Close Claw Studio anyway?",
-            "Claw Studio",
-            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-            [System.Windows.Forms.MessageBoxIcon]::Question
-        )
-
-        if ($choice -ne [System.Windows.Forms.DialogResult]::Yes) {
+        $result = [System.Windows.MessageBox]::Show("A task is still running. Close Claw Studio anyway?", "Claw Studio", "YesNo", "Warning")
+        if ($result -ne [System.Windows.MessageBoxResult]::Yes) {
             $_.Cancel = $true
             return
         }
-
         try {
             $script:CurrentProcess.Kill()
         } catch {
@@ -1082,7 +921,4 @@ $form.Add_FormClosing({
     }
 })
 
-Append-Conversation -Role "System" -Text "Claw Studio is ready. Pick a project folder on the left, then use the composer at the bottom like a chat input." -RoleColor $script:Colors.Muted
-Append-Conversation -Role "Tip" -Text "Start inside a real repo folder, not your whole user directory. Use Ctrl+Enter to send." -RoleColor $script:Colors.Warning
-
-[void]$form.ShowDialog()
+$window.ShowDialog() | Out-Null
