@@ -1,0 +1,43 @@
+{
+  "name": "claw-code-local-ollama-auto-vram-v7-english",
+  "root_files": [
+    "setup.bat",
+    "README.txt"
+  ],
+  "tools_folder": "tools",
+  "language": "English",
+  "fixes": [
+    "Dedicated native process runner for rustup/git/cargo/winget",
+    "stderr is logged but no longer treated as a PowerShell terminating error",
+    "root contains only setup.bat and README.txt"
+  ],
+  "auto_model_policy": {
+    "vram_under_12gb": "qwen2.5-coder:7b",
+    "vram_12_to_19gb": "qwen2.5-coder:14b",
+    "vram_20gb_or_more": "qwen2.5-coder:32b"
+  },
+  "target": "Windows PowerShell 5.1",
+  "local_endpoint": "http://127.0.0.1:11434/v1",
+  "files": [
+    {
+      "name": "README.txt",
+      "size": 1629,
+      "sha256": "dfef7f1ba3a5bdb7fe627be3eb25d0dc027e6c31ff207917e948e377ea112e76"
+    },
+    {
+      "name": "setup.bat",
+      "size": 2007,
+      "sha256": "0c85b8a6cce5f6f6f9d6a774d41110e70f3090b8ddbecb5d06a2844f5463ff34"
+    },
+    {
+      "name": "tools/Install-ClawCode-Ollama.ps1",
+      "size": 27426,
+      "sha256": "24fa8892fe3f27362c5bc40e6e713aef267107b1e31237987a7ff69fa6e3fb40"
+    },
+    {
+      "name": "tools/manual-model-setup.bat",
+      "size": 1094,
+      "sha256": "cb7868a7d8d126f07121fbcc5344f66b76a763e51466e5b954e1b9059f5ca059"
+    }
+  ]
+}

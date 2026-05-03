@@ -8,7 +8,7 @@ param(
     [switch]$ForceRebuild,
     [switch]$RunTests,
     [switch]$NoOllama,
-    [string]$OllamaModel = "qwen2.5-coder:14b",
+    [string]$OllamaModel = "auto",
     [string]$AnthropicApiKey = "",
     [switch]$SkipVsBuildTools,
     [switch]$SkipDoctor
@@ -117,7 +117,83 @@ function Add-UserPath {
     Refresh-CurrentPath
 }
 
-function Invoke-External {
+function Resolve-NativeCommandPath {
+    param([Parameter(Mandatory=$true)][string]$FilePath)
+
+    if ([System.IO.Path]::IsPathRooted($FilePath) -and (Test-Path -LiteralPath $FilePath)) {
+        return $FilePath
+    }
+
+    $command = Get-Command $FilePath -ErrorAction SilentlyContinue
+    if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
+        return $command.Source
+    }
+
+    return $FilePath
+}
+
+function Join-NativeArguments {
+    param([string[]]$Arguments)
+
+    $quoted = New-Object System.Collections.Generic.List[string]
+
+    foreach ($arg in $Arguments) {
+        if ($null -eq $arg) {
+            $quoted.Add('""') | Out-Null
+            continue
+        }
+
+        $value = [string]$arg
+
+        if ($value.Length -eq 0) {
+            $quoted.Add('""') | Out-Null
+            continue
+        }
+
+        if ($value -notmatch '[\s"]') {
+            $quoted.Add($value) | Out-Null
+            continue
+        }
+
+        $result = New-Object System.Text.StringBuilder
+        [void]$result.Append('"')
+        $backslashes = 0
+
+        for ($i = 0; $i -lt $value.Length; $i++) {
+            $char = $value[$i]
+
+            if ($char -eq '\') {
+                $backslashes++
+                continue
+            }
+
+            if ($char -eq '"') {
+                [void]$result.Append(('\' * (($backslashes * 2) + 1)))
+                [void]$result.Append('"')
+                $backslashes = 0
+                continue
+            }
+
+            if ($backslashes -gt 0) {
+                [void]$result.Append(('\' * $backslashes))
+                $backslashes = 0
+            }
+
+            [void]$result.Append($char)
+        }
+
+        if ($backslashes -gt 0) {
+            [void]$result.Append(('\' * ($backslashes * 2)))
+        }
+
+        [void]$result.Append('"')
+        $quoted.Add($result.ToString()) | Out-Null
+    }
+
+    return ($quoted -join " ")
+}
+
+function Invoke-NativeProcess {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$Arguments = @(),
@@ -125,28 +201,102 @@ function Invoke-External {
         [switch]$AllowFailure
     )
 
-    $oldLocation = Get-Location
-    try {
-        if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
-            Set-Location -LiteralPath $WorkingDirectory
-        }
+    $resolvedPath = Resolve-NativeCommandPath -FilePath $FilePath
+    $argumentString = Join-NativeArguments -Arguments $Arguments
 
-        Write-Info ("Running: {0} {1}" -f $FilePath, ($Arguments -join " "))
-        & $FilePath @Arguments
-        $exitCode = $LASTEXITCODE
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $resolvedPath
+    $psi.Arguments = $argumentString
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
 
-        if ($null -eq $exitCode) {
-            $exitCode = 0
-        }
-
-        if (($exitCode -ne 0) -and (-not $AllowFailure)) {
-            throw "Command failed with exit code $exitCode`: $FilePath $($Arguments -join ' ')"
-        }
-
-        return $exitCode
-    } finally {
-        Set-Location $oldLocation
+    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        $psi.WorkingDirectory = $WorkingDirectory
     }
+
+    $stdoutLines = New-Object System.Collections.Generic.List[string]
+    $stderrLines = New-Object System.Collections.Generic.List[string]
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+
+    $stdoutHandler = [System.Diagnostics.DataReceivedEventHandler] {
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            $stdoutLines.Add($eventArgs.Data) | Out-Null
+        }
+    }
+
+    $stderrHandler = [System.Diagnostics.DataReceivedEventHandler] {
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) {
+            $stderrLines.Add($eventArgs.Data) | Out-Null
+        }
+    }
+
+    $process.add_OutputDataReceived($stdoutHandler)
+    $process.add_ErrorDataReceived($stderrHandler)
+
+    try {
+        [void]$process.Start()
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
+        $process.WaitForExit()
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+    } finally {
+        try {
+            $process.remove_OutputDataReceived($stdoutHandler)
+            $process.remove_ErrorDataReceived($stderrHandler)
+        } catch {
+        }
+
+        $process.Dispose()
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        StdOut = @($stdoutLines)
+        StdErr = @($stderrLines)
+    }
+}
+
+function Invoke-External {
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [string]$WorkingDirectory = "",
+        [switch]$AllowFailure,
+        [switch]$PassThruExitCode
+    )
+
+    Write-Info ("Running: {0} {1}" -f $FilePath, ($Arguments -join " "))
+
+    $result = Invoke-NativeProcess -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory -AllowFailure:$AllowFailure
+
+    foreach ($line in $result.StdOut) {
+        if ($null -ne $line) {
+            Write-Host ([string]$line)
+        }
+    }
+
+    foreach ($line in $result.StdErr) {
+        if ($null -ne $line) {
+            Write-Host ([string]$line)
+        }
+    }
+
+    if (($result.ExitCode -ne 0) -and (-not $AllowFailure)) {
+        throw "Command failed with exit code $($result.ExitCode): $FilePath $($Arguments -join ' ')"
+    }
+
+    if ($PassThruExitCode) {
+        return $result.ExitCode
+    }
+
+    return
 }
 
 function Get-CommandOutput {
@@ -156,17 +306,22 @@ function Get-CommandOutput {
         [string]$WorkingDirectory = ""
     )
 
-    $oldLocation = Get-Location
-    try {
-        if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
-            Set-Location -LiteralPath $WorkingDirectory
-        }
+    $result = Invoke-NativeProcess -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory -AllowFailure
 
-        $output = & $FilePath @Arguments 2>&1
-        return ($output | Out-String).Trim()
-    } finally {
-        Set-Location $oldLocation
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $result.StdOut) {
+        if ($null -ne $line) {
+            $lines.Add([string]$line) | Out-Null
+        }
     }
+
+    foreach ($line in $result.StdErr) {
+        if ($null -ne $line) {
+            $lines.Add([string]$line) | Out-Null
+        }
+    }
+
+    return (($lines | Out-String).Trim())
 }
 
 function Test-WingetPackageInstalled {
@@ -176,9 +331,9 @@ function Test-WingetPackageInstalled {
         return $false
     }
 
-    $output = & winget list --id $PackageId -e --accept-source-agreements 2>&1
-    $text = ($output | Out-String)
-    return ($LASTEXITCODE -eq 0 -and $text -match [regex]::Escape($PackageId))
+    $result = Invoke-NativeProcess -FilePath "winget" -Arguments @("list", "--id", $PackageId, "-e", "--accept-source-agreements") -AllowFailure
+    $text = (($result.StdOut + $result.StdErr) | Out-String)
+    return ($result.ExitCode -eq 0 -and $text -match [regex]::Escape($PackageId))
 }
 
 function Install-WingetPackage {
@@ -332,6 +487,88 @@ function Ensure-VsBuildTools {
     }
 }
 
+
+function Get-LargestGpuVramGb {
+    $maxBytes = 0
+
+    try {
+        $controllers = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop
+    } catch {
+        try {
+            $controllers = Get-WmiObject -Class Win32_VideoController -ErrorAction Stop
+        } catch {
+            Write-Warn "Could not detect GPU VRAM automatically. Falling back to qwen2.5-coder:7b."
+            return 0
+        }
+    }
+
+    foreach ($controller in $controllers) {
+        $name = [string]$controller.Name
+        $ram = 0
+
+        try {
+            if ($null -ne $controller.AdapterRAM) {
+                $ram = [int64]$controller.AdapterRAM
+            }
+        } catch {
+            $ram = 0
+        }
+
+        if ($ram -lt 0) {
+            $ram = 0
+        }
+
+        if ($ram -gt $maxBytes) {
+            $maxBytes = $ram
+        }
+
+        if ($ram -gt 0) {
+            $gb = [math]::Round(($ram / 1GB), 1)
+            Write-Info ("Detected GPU: {0} / approx. {1} GB VRAM" -f $name, $gb)
+        } else {
+            Write-Info ("Detected GPU: {0} / VRAM unknown" -f $name)
+        }
+    }
+
+    if ($maxBytes -le 0) {
+        return 0
+    }
+
+    return [math]::Round(($maxBytes / 1GB), 1)
+}
+
+function Resolve-OllamaModel {
+    param([string]$RequestedModel)
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedModel) -and $RequestedModel -ine "auto") {
+        Write-Ok "Using explicitly selected Ollama model: $RequestedModel"
+        return $RequestedModel
+    }
+
+    $vramGb = Get-LargestGpuVramGb
+
+    if ($vramGb -ge 20) {
+        $selected = "qwen2.5-coder:32b"
+        Write-Ok "Auto-selected model for approx. $vramGb GB VRAM: $selected"
+        return $selected
+    }
+
+    if ($vramGb -ge 12) {
+        $selected = "qwen2.5-coder:14b"
+        Write-Ok "Auto-selected model for approx. $vramGb GB VRAM: $selected"
+        return $selected
+    }
+
+    $selected = "qwen2.5-coder:7b"
+    if ($vramGb -gt 0) {
+        Write-Ok "Auto-selected model for approx. $vramGb GB VRAM: $selected"
+    } else {
+        Write-Ok "Auto-selected fallback model because VRAM could not be detected: $selected"
+    }
+
+    return $selected
+}
+
 function Ensure-Ollama {
     Write-Step "Checking Ollama"
 
@@ -339,6 +576,10 @@ function Ensure-Ollama {
         Write-Info "Ollama setup is disabled because -NoOllama was provided."
         return
     }
+
+    $script:OllamaModel = Resolve-OllamaModel -RequestedModel $OllamaModel
+    $OllamaModel = $script:OllamaModel
+
 
     if (-not (Test-CommandExists "ollama")) {
         Install-WingetPackage -PackageId "Ollama.Ollama" -DisplayName "Ollama" -ExtraArgs @("--silent")
@@ -548,7 +789,7 @@ function Verify-Claw {
         return
     }
 
-    $doctorExit = Invoke-External -FilePath $ClawBinary -Arguments @("doctor") -AllowFailure
+    $doctorExit = Invoke-External -FilePath $ClawBinary -Arguments @("doctor") -AllowFailure -PassThruExitCode -PassThruExitCode
     if ($doctorExit -ne 0) {
         Write-Warn "claw doctor returned exit code $doctorExit. This is often caused by a missing API key or backend configuration."
     } else {
@@ -556,7 +797,7 @@ function Verify-Claw {
     }
 
     if (-not $NoOllama) {
-        $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $OllamaModel, "prompt", "Say hello in one short sentence.") -AllowFailure
+        $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $OllamaModel, "prompt", "Say hello in one short sentence.") -AllowFailure -PassThruExitCode -PassThruExitCode
         if ($promptExit -ne 0) {
             Write-Warn "Ollama prompt test returned exit code $promptExit. Check model name and local Ollama server."
         }
@@ -600,10 +841,11 @@ function Show-Summary {
 }
 
 try {
-    Write-Host "Claw Code Local Ollama Bootstrap for Windows PowerShell 5.1"
+    Write-Host "Claw Code Local Ollama Bootstrap for Windows PowerShell 5.1 - fixed v7 native-runner"
     Write-Host "InstallRoot: $InstallRoot"
     Write-Host "Release build: $Release"
     Write-Host "Use Ollama: $(-not $NoOllama)"
+    Write-Host "Requested Ollama model: $OllamaModel"
 
     Refresh-CurrentPath
 
@@ -615,11 +857,12 @@ try {
     Ensure-Rust
     Ensure-VsBuildTools
     Ensure-Ollama
+    if ($script:OllamaModel) { $OllamaModel = $script:OllamaModel }
     Configure-ApiKeys
 
-    $rustDir = Ensure-Repository
-    $builtBinary = Build-ClawCode -RustDir $rustDir
-    $installedBinary = Install-ClawBinary -SourceBinary $builtBinary
+    $rustDir = @(Ensure-Repository | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })[-1]
+    $builtBinary = @(Build-ClawCode -RustDir $rustDir | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })[-1]
+    $installedBinary = @(Install-ClawBinary -SourceBinary $builtBinary | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })[-1]
     Verify-Claw -ClawBinary $installedBinary
 
     Show-Summary
