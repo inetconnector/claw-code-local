@@ -1,0 +1,35 @@
+{
+  "name": "claw-code-local-ollama-installer",
+  "default_model": "qwen2.5-coder:14b",
+  "fallback_model": "qwen2.5-coder:7b",
+  "experimental_model": "qwen2.5-coder:32b",
+  "target": "Windows PowerShell 5.1",
+  "local_endpoint": "http://127.0.0.1:11434/v1",
+  "files": [
+    {
+      "name": "Install-ClawCode-Ollama.ps1",
+      "size": 20370,
+      "sha256": "ab3b65bf2e7fd2cc608d2b4d188b1bf500b1999013409a9cd2f43caba1d2b06f"
+    },
+    {
+      "name": "README-DE.txt",
+      "size": 2020,
+      "sha256": "43d9f8c86997159cad48657cb7dc71d8cd9b47b3fdaeb870343652e7f98697cf"
+    },
+    {
+      "name": "RUN-INSTALL-LOCAL-OLLAMA-14B-DEFAULT.bat",
+      "size": 577,
+      "sha256": "cb8384f29ee2e670fa73cbe7df297ce485d58b3b478e9453d2d1510b5d067ab0"
+    },
+    {
+      "name": "RUN-INSTALL-LOCAL-OLLAMA-32B-EXPERIMENTAL.bat",
+      "size": 751,
+      "sha256": "668b59b662fcba1af4b78ee8be7598841d766ed54b40e51ca4879969320ba329"
+    },
+    {
+      "name": "RUN-INSTALL-LOCAL-OLLAMA-7B-FALLBACK.bat",
+      "size": 608,
+      "sha256": "fb79cea86382cef7d48d45ec961d18d0d65a2fc28777599bb5a3539151e7007c"
+    }
+  ]
+}
