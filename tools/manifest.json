@@ -2,7 +2,7 @@
   "name": "claw-code-local-ollama-auto-vram-v10-english",
   "root_files": [
     "setup.bat",
-    "README.txt"
+    "README.md"
   ],
   "tools_folder": "tools",
   "language": "English",
@@ -10,7 +10,7 @@
     "Uses Claw provider/model syntax for Ollama: openai/<ollama-model>",
     "setup.bat refreshes PATH in the current CMD session after installation",
     "full claw.exe fallback path included",
-    "root contains only setup.bat and README.txt"
+    "root contains only setup.bat and README.md"
   ],
   "auto_model_policy": {
     "vram_under_12gb": "qwen2.5-coder:7b",
@@ -22,19 +22,19 @@
   "claw_ollama_model_prefix": "openai/",
   "files": [
     {
-      "name": "README.txt",
-      "size": 1626,
-      "sha256": "c422bd046743921cc5fe676bfa6d097784aefd11c923130ccb07e7648893969c"
+      "name": "README.md",
+      "size": 7963,
+      "sha256": "d6749a48f0de18b3b67c2df4c88a1b1388f1f8a46b3729337a98ce9254185f98"
     },
     {
       "name": "setup.bat",
-      "size": 2360,
-      "sha256": "967885b7d33c1b44e52e7582052f8693bd63ca37aecb2597e51ed9d34012c5ae"
+      "size": 2655,
+      "sha256": "d57b87c16faa44cd852f3e0023bf2eb6d964798c018c036fb6db838b8e0c0c1a"
     },
     {
       "name": "tools/Install-ClawCode-Ollama.ps1",
-      "size": 29329,
-      "sha256": "fd607a6fc3b3e77f70fd2eab98a921341b9787a2b33d604364564b11d09c28c6"
+      "size": 32819,
+      "sha256": "3c48ea9115e9ad2f7a53be209ac1a83f9e8785e9474cebf761c62ee53757302c"
     },
     {
       "name": "tools/manual-model-setup.bat",

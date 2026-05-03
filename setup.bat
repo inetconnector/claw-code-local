@@ -17,7 +17,7 @@ set "LOGFILE=%LOGFILE: =0%"
 
 echo ============================================================
 echo Claw Code Local Ollama Auto Setup
-echo Root stays clean: only setup.bat and README.txt are here.
+echo Root stays clean: only setup.bat and README.md are here.
 echo Tools folder: %~dp0tools
 echo Log: %LOGFILE%
 echo.
@@ -28,6 +28,10 @@ echo   20 GB or more - qwen2.5-coder:32b
 echo.
 echo Claw uses the OpenAI-compatible router for Ollama:
 echo   openai/qwen2.5-coder:14b
+echo.
+echo This setup also installs Claw Studio:
+echo   a small desktop GUI for running Claw in a project folder
+echo   plus a Desktop shortcut and a Start menu shortcut
 echo ============================================================
 echo.
 
@@ -52,11 +56,16 @@ if "%EXITCODE%"=="0" (
     echo This same CMD window now has a temporary PATH refresh.
     echo You can test either:
     echo   claw --version
+    echo   claw-studio.bat
     echo.
     echo or with the full path:
     echo   "%CLAW_BIN%" --version
     echo.
-    echo Ollama test:
+    echo GUI:
+    echo   claw-studio.bat
+    echo   Desktop shortcut: Claw Studio
+    echo.
+    echo Manual Ollama test:
     echo   "%CLAW_BIN%" --model openai/qwen2.5-coder:14b prompt "Say hello in one short sentence."
 ) else (
     echo An error occurred. Use this output or the log file for troubleshooting.

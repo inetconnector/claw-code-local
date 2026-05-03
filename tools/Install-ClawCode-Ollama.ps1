@@ -11,7 +11,8 @@ param(
     [string]$OllamaModel = "auto",
     [string]$AnthropicApiKey = "",
     [switch]$SkipVsBuildTools,
-    [switch]$SkipDoctor
+    [switch]$SkipDoctor,
+    [switch]$RunPromptTest
 )
 
 Set-StrictMode -Version 2.0
@@ -796,6 +797,82 @@ function Install-ClawBinary {
     return $targetBinary
 }
 
+function Install-ClawStudio {
+    Write-Step "Installing Claw Studio"
+
+    $sourceStudioScript = Join-Path $PSScriptRoot "ClawStudio.ps1"
+    $sourceLauncher = Join-Path $PSScriptRoot "launch-claw-studio.bat"
+    $sourceIcon = Join-Path $PSScriptRoot "assets\ClawStudio.ico"
+
+    if (-not (Test-Path -LiteralPath $sourceStudioScript)) {
+        Write-Warn "Claw Studio script was not found next to the installer. Skipping GUI installation."
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $sourceLauncher)) {
+        Write-Warn "Claw Studio launcher was not found next to the installer. Skipping GUI installation."
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $sourceIcon)) {
+        Write-Warn "Claw Studio icon was not found next to the installer. Shortcuts will use the default launcher icon."
+    }
+
+    $studioDir = Join-Path $env:LOCALAPPDATA "Programs\ClawCode\studio"
+    $binDir = Join-Path $env:LOCALAPPDATA "Programs\ClawCode\bin"
+    $targetStudioScript = Join-Path $studioDir "ClawStudio.ps1"
+    $targetIcon = Join-Path $studioDir "ClawStudio.ico"
+    $targetLauncher = Join-Path $binDir "claw-studio.bat"
+    $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Claw Studio.lnk"
+    $programsDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
+    $startMenuShortcut = Join-Path $programsDir "Claw Studio.lnk"
+
+    if (-not (Test-Path -LiteralPath $studioDir)) {
+        New-Item -ItemType Directory -Path $studioDir -Force | Out-Null
+    }
+
+    if (-not (Test-Path -LiteralPath $binDir)) {
+        New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+    }
+
+    if (-not (Test-Path -LiteralPath $programsDir)) {
+        New-Item -ItemType Directory -Path $programsDir -Force | Out-Null
+    }
+
+    Copy-Item -LiteralPath $sourceStudioScript -Destination $targetStudioScript -Force
+    Copy-Item -LiteralPath $sourceLauncher -Destination $targetLauncher -Force
+    if (Test-Path -LiteralPath $sourceIcon) {
+        Copy-Item -LiteralPath $sourceIcon -Destination $targetIcon -Force
+    }
+
+    try {
+        $wsh = New-Object -ComObject WScript.Shell
+
+        foreach ($shortcutPath in @($desktopShortcut, $startMenuShortcut)) {
+            $shortcut = $wsh.CreateShortcut($shortcutPath)
+            $shortcut.TargetPath = $targetLauncher
+            $shortcut.WorkingDirectory = $binDir
+            $shortcut.Description = "Launch Claw Studio"
+            if (Test-Path -LiteralPath $targetIcon) {
+                $shortcut.IconLocation = $targetIcon
+            } else {
+                $shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,220"
+            }
+            $shortcut.Save()
+        }
+
+        $Global:BootstrapActions.Add("Created Claw Studio shortcuts") | Out-Null
+        Write-Ok "Created desktop shortcut: $desktopShortcut"
+        Write-Ok "Created Start menu shortcut: $startMenuShortcut"
+    } catch {
+        Write-Warn "Claw Studio was installed, but shortcut creation failed: $($_.Exception.Message)"
+    }
+
+    $Global:BootstrapActions.Add("Installed Claw Studio to $studioDir") | Out-Null
+    Write-Ok "Installed Claw Studio: $targetStudioScript"
+    Write-Ok "Installed launcher: $targetLauncher"
+}
+
 function Configure-ApiKeys {
     Write-Step "Checking API/backend environment"
 
@@ -847,12 +924,14 @@ function Verify-Claw {
         Write-Ok "claw doctor completed successfully."
     }
 
-    if (-not $NoOllama) {
+    if ($RunPromptTest -and -not $NoOllama) {
         $clawModel = Get-ClawModelName -OllamaModelName $OllamaModel
         $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $clawModel, "prompt", "Say hello in one short sentence.") -AllowFailure -PassThruExitCode
         if ($promptExit -ne 0) {
             Write-Warn "Ollama prompt test returned exit code $promptExit. Check model name and local Ollama server."
         }
+    } elseif (-not $NoOllama) {
+        Write-Info "Skipping the automatic Ollama prompt test. Use Claw Studio or a manual claw --model ... prompt command when you are ready."
     }
 }
 
@@ -880,6 +959,7 @@ function Show-Summary {
     Write-Host "Useful commands:"
     Write-Host "  claw --version"
     Write-Host "  claw doctor"
+    Write-Host "  claw-studio.bat"
     Write-Host "  ollama list"
 
     if (-not $NoOllama) {
@@ -895,7 +975,7 @@ function Show-Summary {
 }
 
 try {
-    Write-Host "Claw Code Local Ollama Bootstrap for Windows PowerShell 5.1 - fixed v10 ollama-router"
+    Write-Host "Claw Code Local Ollama Bootstrap for Windows PowerShell 5.1 - v12 studio"
     Write-Host "InstallRoot: $InstallRoot"
     Write-Host "Release build: $Release"
     Write-Host "Use Ollama: $(-not $NoOllama)"
@@ -917,6 +997,7 @@ try {
     $rustDir = @(Ensure-Repository | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })[-1]
     $builtBinary = @(Build-ClawCode -RustDir $rustDir | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })[-1]
     $installedBinary = @(Install-ClawBinary -SourceBinary $builtBinary | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })[-1]
+    Install-ClawStudio
     Verify-Claw -ClawBinary $installedBinary
 
     Show-Summary
