@@ -756,7 +756,7 @@ Sync-PermissionCombo
 $PromptTextBox.Text = "Analyze this repository. Explain the architecture, build flow, dependencies, risky areas, and the first improvement you would make."
 Refresh-ProjectState
 Update-ThreadTitle -Title $script:CurrentThreadTitle
-ThreadSubtitleText.Text = "bereit"
+$ThreadSubtitleText.Text = "bereit"
 Add-Conversation -Role "System" -Text "Claw Studio is ready. Pick a project folder, then use the composer below like a chat input." -RoleColor $script:Theme.Muted | Out-Null
 Add-Conversation -Role "Tip" -Text "Start inside a real repo folder, not your whole user directory. Press Ctrl+Enter to send." -RoleColor $script:Theme.Yellow | Out-Null
 
