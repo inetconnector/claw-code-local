@@ -220,16 +220,61 @@ function Invoke-NativeProcess {
     }
 }
 
+function Invoke-LiveNativeProcess {
+    param(
+        [Parameter(Mandatory=$true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [string]$WorkingDirectory = ""
+    )
+
+    $resolvedPath = Resolve-NativeCommandPath -FilePath $FilePath
+    $argumentString = Join-NativeArguments -Arguments $Arguments
+
+    $startArgs = @{
+        FilePath = $resolvedPath
+        ArgumentList = $argumentString
+        Wait = $true
+        PassThru = $true
+        NoNewWindow = $true
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        $startArgs["WorkingDirectory"] = $WorkingDirectory
+    }
+
+    $process = Start-Process @startArgs
+    if ($null -eq $process.ExitCode) {
+        return 0
+    }
+
+    return [int]$process.ExitCode
+}
+
 function Invoke-External {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$Arguments = @(),
         [string]$WorkingDirectory = "",
         [switch]$AllowFailure,
-        [switch]$PassThruExitCode
+        [switch]$PassThruExitCode,
+        [switch]$LiveOutput
     )
 
     Write-Info ("Running: {0} {1}" -f $FilePath, ($Arguments -join " "))
+
+    if ($LiveOutput) {
+        $exitCode = Invoke-LiveNativeProcess -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+
+        if (($exitCode -ne 0) -and (-not $AllowFailure)) {
+            throw "Command failed with exit code $($exitCode): $FilePath $($Arguments -join ' ')"
+        }
+
+        if ($PassThruExitCode) {
+            return $exitCode
+        }
+
+        return
+    }
 
     $result = Invoke-NativeProcess -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory -AllowFailure:$AllowFailure
 
@@ -447,6 +492,39 @@ function Ensure-VsBuildTools {
 
 
 function Get-LargestGpuVramGb {
+    $maxGb = 0
+
+    if (Test-CommandExists "nvidia-smi") {
+        try {
+            $gpuInfo = Get-CommandOutput -FilePath "nvidia-smi" -Arguments @("--query-gpu=name,memory.total", "--format=csv,noheader,nounits")
+            $lines = @($gpuInfo -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+            foreach ($line in $lines) {
+                $parts = $line.Split(",")
+                if ($parts.Count -ge 2) {
+                    $name = $parts[0].Trim()
+                    $memoryMbText = $parts[1].Trim()
+                    $memoryMb = 0
+
+                    if ([int]::TryParse($memoryMbText, [ref]$memoryMb)) {
+                        $gb = [math]::Round(($memoryMb / 1024), 1)
+                        Write-Info ("Detected NVIDIA GPU via nvidia-smi: {0} / approx. {1} GB VRAM" -f $name, $gb)
+
+                        if ($gb -gt $maxGb) {
+                            $maxGb = $gb
+                        }
+                    }
+                }
+            }
+
+            if ($maxGb -gt 0) {
+                return $maxGb
+            }
+        } catch {
+            Write-Warn "nvidia-smi VRAM detection failed. Falling back to Windows video controller detection."
+        }
+    }
+
     $maxBytes = 0
 
     try {
@@ -482,9 +560,9 @@ function Get-LargestGpuVramGb {
 
         if ($ram -gt 0) {
             $gb = [math]::Round(($ram / 1GB), 1)
-            Write-Info ("Detected GPU: {0} / approx. {1} GB VRAM" -f $name, $gb)
+            Write-Info ("Detected GPU via Windows video controller: {0} / approx. {1} GB VRAM" -f $name, $gb)
         } else {
-            Write-Info ("Detected GPU: {0} / VRAM unknown" -f $name)
+            Write-Info ("Detected GPU via Windows video controller: {0} / VRAM unknown" -f $name)
         }
     }
 
@@ -580,7 +658,7 @@ function Ensure-Ollama {
 
         if (-not $modelExists) {
             Write-Info "Pulling Ollama model: $OllamaModel"
-            Invoke-External -FilePath "ollama" -Arguments @("pull", $OllamaModel)
+            Invoke-External -FilePath "ollama" -Arguments @("pull", $OllamaModel) -LiveOutput
             $Global:BootstrapActions.Add("Pulled Ollama model $OllamaModel") | Out-Null
         } else {
             Write-Ok "Ollama model is already present: $OllamaModel"
@@ -664,15 +742,15 @@ function Build-ClawCode {
     }
 
     if ($ForceRebuild) {
-        Invoke-External -FilePath "cargo" -Arguments @("clean") -WorkingDirectory $RustDir
+        Invoke-External -FilePath "cargo" -Arguments @("clean") -WorkingDirectory $RustDir -LiveOutput
         $Global:BootstrapActions.Add("Cleaned Cargo target directory") | Out-Null
     }
 
-    Invoke-External -FilePath "cargo" -Arguments $buildArgs -WorkingDirectory $RustDir
+    Invoke-External -FilePath "cargo" -Arguments $buildArgs -WorkingDirectory $RustDir -LiveOutput
     $Global:BootstrapActions.Add("Built Claw Code workspace") | Out-Null
 
     if ($RunTests) {
-        Invoke-External -FilePath "cargo" -Arguments @("test", "--workspace") -WorkingDirectory $RustDir
+        Invoke-External -FilePath "cargo" -Arguments @("test", "--workspace") -WorkingDirectory $RustDir -LiveOutput
         $Global:BootstrapActions.Add("Ran Cargo workspace tests") | Out-Null
     }
 
@@ -735,6 +813,21 @@ function Configure-ApiKeys {
     }
 }
 
+
+function Get-ClawModelName {
+    param([string]$OllamaModelName)
+
+    if ([string]::IsNullOrWhiteSpace($OllamaModelName)) {
+        return ""
+    }
+
+    if ($OllamaModelName -match "^[^/]+/.+") {
+        return $OllamaModelName
+    }
+
+    return "openai/$OllamaModelName"
+}
+
 function Verify-Claw {
     param([Parameter(Mandatory=$true)][string]$ClawBinary)
 
@@ -755,7 +848,8 @@ function Verify-Claw {
     }
 
     if (-not $NoOllama) {
-        $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $OllamaModel, "prompt", "Say hello in one short sentence.") -AllowFailure -PassThruExitCode
+        $clawModel = Get-ClawModelName -OllamaModelName $OllamaModel
+        $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $clawModel, "prompt", "Say hello in one short sentence.") -AllowFailure -PassThruExitCode
         if ($promptExit -ne 0) {
             Write-Warn "Ollama prompt test returned exit code $promptExit. Check model name and local Ollama server."
         }
@@ -789,17 +883,19 @@ function Show-Summary {
     Write-Host "  ollama list"
 
     if (-not $NoOllama) {
-        Write-Host ("  claw --model {0} prompt ""summarize this folder""" -f $OllamaModel)
+        $clawModel = Get-ClawModelName -OllamaModelName $OllamaModel
+        Write-Host ("  claw --model {0} prompt ""summarize this folder""" -f $clawModel)
     } else {
         Write-Host "  claw prompt ""summarize this folder"""
     }
 
     Write-Host ""
-    Write-Host "If PATH changes are not visible in an old terminal, open a new PowerShell window."
+    Write-Host "If PATH changes are not visible in an old terminal, open a new PowerShell window or use the full path:"
+    Write-Host ("  ""{0}"" --version" -f (Join-Path $env:LOCALAPPDATA "Programs\ClawCode\bin\claw.exe"))
 }
 
 try {
-    Write-Host "Claw Code Local Ollama Bootstrap for Windows PowerShell 5.1 - fixed v8 sync-runner"
+    Write-Host "Claw Code Local Ollama Bootstrap for Windows PowerShell 5.1 - fixed v10 ollama-router"
     Write-Host "InstallRoot: $InstallRoot"
     Write-Host "Release build: $Release"
     Write-Host "Use Ollama: $(-not $NoOllama)"

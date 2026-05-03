@@ -25,22 +25,28 @@ With 16 GB VRAM, it automatically selects:
 
 qwen2.5-coder:14b
 
-What is checked or installed automatically
-- Git
-- Rust/Rustup/Cargo
-- Visual C++ Build Tools
-- Ollama
-- the selected Ollama model
-- Claw Code from https://github.com/ultraworkers/claw-code.git
-- claw.exe build
-- installation to %LOCALAPPDATA%\Programs\ClawCode\bin
-- user PATH entry
-- claw --version
-- claw doctor
+Important Claw/Ollama syntax
+Claw Code expects provider/model syntax.
+For Ollama, use the OpenAI-compatible router prefix:
 
-Fix in v8
-Native programs such as rustup, git and cargo are now launched through Start-Process with temporary stdout/stderr files.
-This avoids PowerShell 5.1 event-handler instability and prevents normal stderr output from killing the installer.
+openai/qwen2.5-coder:14b
+
+So the correct test command is:
+
+claw --model openai/qwen2.5-coder:14b prompt "Say hello in one short sentence."
+
+If the current CMD window still does not find claw, use the full path:
+
+"%LOCALAPPDATA%\Programs\ClawCode\bin\claw.exe" --version
+
+Fix in v10
+- Ollama tests now use openai/<model>, for example openai/qwen2.5-coder:14b.
+- setup.bat refreshes PATH inside the current CMD window after installation.
+- The test instructions use the full claw.exe path as a fallback.
+
+Fix in v9
+- cargo build, cargo clean, cargo test and ollama pull use live console output.
+- NVIDIA VRAM detection uses nvidia-smi first.
 
 After successful installation
 Open a new PowerShell window and run:
@@ -48,10 +54,7 @@ Open a new PowerShell window and run:
 claw --version
 claw doctor
 ollama list
-
-Test with the selected model, usually this on a 16 GB VRAM GPU:
-
-claw --model qwen2.5-coder:14b prompt "Say hello in one short sentence."
+claw --model openai/qwen2.5-coder:14b prompt "Say hello in one short sentence."
 
 Manual model selection
 Optional helper:
@@ -59,6 +62,3 @@ Optional helper:
 tools\manual-model-setup.bat
 
 Normally, setup.bat is enough.
-
-Notes
-The setup is idempotent. You can run it multiple times. Existing components are checked and are not installed twice unnecessarily.

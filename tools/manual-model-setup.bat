@@ -21,8 +21,13 @@ set "LOGFILE=%LOGFILE: =0%"
 
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "try { Start-Transcript -Path $env:LOGFILE -Append | Out-Null; & '%~dp0Install-ClawCode-Ollama.ps1' -Release -OllamaModel '%MODEL%'; $code = $LASTEXITCODE; if ($null -eq $code) { $code = 0 } } catch { Write-Host ''; Write-Host '[FATAL]' $_.Exception.Message; $code = 1 } finally { try { Stop-Transcript | Out-Null } catch { } }; exit $code"
 
+set "CLAW_BIN=%LOCALAPPDATA%\Programs\ClawCode\bin\claw.exe"
+set "PATH=%LOCALAPPDATA%\Programs\ClawCode\bin;%PATH%"
+
 echo.
 echo Exit code: %ERRORLEVEL%
 echo Log: %LOGFILE%
+echo Test:
+echo "%CLAW_BIN%" --model openai/%MODEL% prompt "Say hello in one short sentence."
 echo.
 cmd /k

@@ -25,12 +25,18 @@ echo The model will be selected automatically by detected GPU VRAM:
 echo   under 12 GB   - qwen2.5-coder:7b
 echo   12 to 19 GB   - qwen2.5-coder:14b
 echo   20 GB or more - qwen2.5-coder:32b
+echo.
+echo Claw uses the OpenAI-compatible router for Ollama:
+echo   openai/qwen2.5-coder:14b
 echo ============================================================
 echo.
 
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "try { Start-Transcript -Path $env:LOGFILE -Append | Out-Null; & '%~dp0tools\Install-ClawCode-Ollama.ps1' -Release -OllamaModel 'auto'; $code = $LASTEXITCODE; if ($null -eq $code) { $code = 0 } } catch { Write-Host ''; Write-Host '[FATAL]' $_.Exception.Message; $code = 1 } finally { try { Stop-Transcript | Out-Null } catch { } }; exit $code"
 
 set "EXITCODE=%ERRORLEVEL%"
+set "CLAW_BIN=%LOCALAPPDATA%\Programs\ClawCode\bin\claw.exe"
+set "PATH=%LOCALAPPDATA%\Programs\ClawCode\bin;%PATH%"
+
 echo.
 echo ============================================================
 echo Installer finished with exit code %EXITCODE%.
@@ -41,11 +47,17 @@ echo.
 echo This window will NOT close automatically.
 echo.
 if "%EXITCODE%"=="0" (
-    echo Installation complete. Open a new PowerShell window and test:
+    echo Installation complete.
+    echo.
+    echo This same CMD window now has a temporary PATH refresh.
+    echo You can test either:
     echo   claw --version
-    echo   claw doctor
-    echo   ollama list
-    echo   claw --model qwen2.5-coder:14b prompt "Say hello in one short sentence."
+    echo.
+    echo or with the full path:
+    echo   "%CLAW_BIN%" --version
+    echo.
+    echo Ollama test:
+    echo   "%CLAW_BIN%" --model openai/qwen2.5-coder:14b prompt "Say hello in one short sentence."
 ) else (
     echo An error occurred. Use this output or the log file for troubleshooting.
 )
