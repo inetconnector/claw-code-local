@@ -38,9 +38,9 @@ What is checked or installed automatically
 - claw --version
 - claw doctor
 
-Fix in v7
-Native programs such as rustup, git and cargo are now launched through a dedicated process runner.
-Their stderr output is displayed and logged, but it no longer kills the installer just because PowerShell has ErrorActionPreference set to Stop.
+Fix in v8
+Native programs such as rustup, git and cargo are now launched through Start-Process with temporary stdout/stderr files.
+This avoids PowerShell 5.1 event-handler instability and prevents normal stderr output from killing the installer.
 
 After successful installation
 Open a new PowerShell window and run:

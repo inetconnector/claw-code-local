@@ -155,39 +155,8 @@ function Join-NativeArguments {
             continue
         }
 
-        $result = New-Object System.Text.StringBuilder
-        [void]$result.Append('"')
-        $backslashes = 0
-
-        for ($i = 0; $i -lt $value.Length; $i++) {
-            $char = $value[$i]
-
-            if ($char -eq '\') {
-                $backslashes++
-                continue
-            }
-
-            if ($char -eq '"') {
-                [void]$result.Append(('\' * (($backslashes * 2) + 1)))
-                [void]$result.Append('"')
-                $backslashes = 0
-                continue
-            }
-
-            if ($backslashes -gt 0) {
-                [void]$result.Append(('\' * $backslashes))
-                $backslashes = 0
-            }
-
-            [void]$result.Append($char)
-        }
-
-        if ($backslashes -gt 0) {
-            [void]$result.Append(('\' * ($backslashes * 2)))
-        }
-
-        [void]$result.Append('"')
-        $quoted.Add($result.ToString()) | Out-Null
+        $escaped = $value.Replace('\', '\\').Replace('"', '\"')
+        $quoted.Add('"' + $escaped + '"') | Out-Null
     }
 
     return ($quoted -join " ")
@@ -204,62 +173,50 @@ function Invoke-NativeProcess {
     $resolvedPath = Resolve-NativeCommandPath -FilePath $FilePath
     $argumentString = Join-NativeArguments -Arguments $Arguments
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $resolvedPath
-    $psi.Arguments = $argumentString
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
-
-    if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
-        $psi.WorkingDirectory = $WorkingDirectory
-    }
-
-    $stdoutLines = New-Object System.Collections.Generic.List[string]
-    $stderrLines = New-Object System.Collections.Generic.List[string]
-
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $psi
-
-    $stdoutHandler = [System.Diagnostics.DataReceivedEventHandler] {
-        param($sender, $eventArgs)
-        if ($null -ne $eventArgs.Data) {
-            $stdoutLines.Add($eventArgs.Data) | Out-Null
-        }
-    }
-
-    $stderrHandler = [System.Diagnostics.DataReceivedEventHandler] {
-        param($sender, $eventArgs)
-        if ($null -ne $eventArgs.Data) {
-            $stderrLines.Add($eventArgs.Data) | Out-Null
-        }
-    }
-
-    $process.add_OutputDataReceived($stdoutHandler)
-    $process.add_ErrorDataReceived($stderrHandler)
+    $stdoutFile = [System.IO.Path]::GetTempFileName()
+    $stderrFile = [System.IO.Path]::GetTempFileName()
 
     try {
-        [void]$process.Start()
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
-        $process.WaitForExit()
-        $process.WaitForExit()
-        $exitCode = $process.ExitCode
-    } finally {
-        try {
-            $process.remove_OutputDataReceived($stdoutHandler)
-            $process.remove_ErrorDataReceived($stderrHandler)
-        } catch {
+        $startArgs = @{
+            FilePath = $resolvedPath
+            ArgumentList = $argumentString
+            Wait = $true
+            PassThru = $true
+            NoNewWindow = $true
+            RedirectStandardOutput = $stdoutFile
+            RedirectStandardError = $stderrFile
         }
 
-        $process.Dispose()
-    }
+        if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+            $startArgs["WorkingDirectory"] = $WorkingDirectory
+        }
 
-    return [pscustomobject]@{
-        ExitCode = $exitCode
-        StdOut = @($stdoutLines)
-        StdErr = @($stderrLines)
+        $process = Start-Process @startArgs
+        $exitCode = $process.ExitCode
+
+        $stdout = @()
+        $stderr = @()
+
+        if (Test-Path -LiteralPath $stdoutFile) {
+            $stdout = @(Get-Content -LiteralPath $stdoutFile -ErrorAction SilentlyContinue)
+        }
+
+        if (Test-Path -LiteralPath $stderrFile) {
+            $stderr = @(Get-Content -LiteralPath $stderrFile -ErrorAction SilentlyContinue)
+        }
+
+        if ($null -eq $exitCode) {
+            $exitCode = 0
+        }
+
+        return [pscustomobject]@{
+            ExitCode = $exitCode
+            StdOut = @($stdout)
+            StdErr = @($stderr)
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -309,6 +266,7 @@ function Get-CommandOutput {
     $result = Invoke-NativeProcess -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory -AllowFailure
 
     $lines = New-Object System.Collections.Generic.List[string]
+
     foreach ($line in $result.StdOut) {
         if ($null -ne $line) {
             $lines.Add([string]$line) | Out-Null
@@ -789,7 +747,7 @@ function Verify-Claw {
         return
     }
 
-    $doctorExit = Invoke-External -FilePath $ClawBinary -Arguments @("doctor") -AllowFailure -PassThruExitCode -PassThruExitCode
+    $doctorExit = Invoke-External -FilePath $ClawBinary -Arguments @("doctor") -AllowFailure -PassThruExitCode
     if ($doctorExit -ne 0) {
         Write-Warn "claw doctor returned exit code $doctorExit. This is often caused by a missing API key or backend configuration."
     } else {
@@ -797,7 +755,7 @@ function Verify-Claw {
     }
 
     if (-not $NoOllama) {
-        $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $OllamaModel, "prompt", "Say hello in one short sentence.") -AllowFailure -PassThruExitCode -PassThruExitCode
+        $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $OllamaModel, "prompt", "Say hello in one short sentence.") -AllowFailure -PassThruExitCode
         if ($promptExit -ne 0) {
             Write-Warn "Ollama prompt test returned exit code $promptExit. Check model name and local Ollama server."
         }
@@ -841,7 +799,7 @@ function Show-Summary {
 }
 
 try {
-    Write-Host "Claw Code Local Ollama Bootstrap for Windows PowerShell 5.1 - fixed v7 native-runner"
+    Write-Host "Claw Code Local Ollama Bootstrap for Windows PowerShell 5.1 - fixed v8 sync-runner"
     Write-Host "InstallRoot: $InstallRoot"
     Write-Host "Release build: $Release"
     Write-Host "Use Ollama: $(-not $NoOllama)"

@@ -1,5 +1,5 @@
 {
-  "name": "claw-code-local-ollama-auto-vram-v7-english",
+  "name": "claw-code-local-ollama-auto-vram-v8-english",
   "root_files": [
     "setup.bat",
     "README.txt"
@@ -7,7 +7,8 @@
   "tools_folder": "tools",
   "language": "English",
   "fixes": [
-    "Dedicated native process runner for rustup/git/cargo/winget",
+    "Dedicated synchronous Start-Process native runner",
+    "No DataReceivedEventHandler usage",
     "stderr is logged but no longer treated as a PowerShell terminating error",
     "root contains only setup.bat and README.txt"
   ],
@@ -21,8 +22,8 @@
   "files": [
     {
       "name": "README.txt",
-      "size": 1629,
-      "sha256": "dfef7f1ba3a5bdb7fe627be3eb25d0dc027e6c31ff207917e948e377ea112e76"
+      "size": 1621,
+      "sha256": "65b204422bf2e1ee0ad0b8ac0a31af48a2b2fe9f0a01b84d025f0bf25dabb9d4"
     },
     {
       "name": "setup.bat",
@@ -31,8 +32,8 @@
     },
     {
       "name": "tools/Install-ClawCode-Ollama.ps1",
-      "size": 27426,
-      "sha256": "24fa8892fe3f27362c5bc40e6e713aef267107b1e31237987a7ff69fa6e3fb40"
+      "size": 26260,
+      "sha256": "6d29caca3408ceb1944275460b951b00ad41592aa683bd2fe13faaaf18e64877"
     },
     {
       "name": "tools/manual-model-setup.bat",
