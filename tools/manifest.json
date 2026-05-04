@@ -1,5 +1,5 @@
 {
-  "name": "claw-code-local-ollama-auto-vram-v10-english",
+  "name": "claw-code-local-ollama-auto-vram-v12-studio-nohang",
   "root_files": [
     "setup.bat",
     "README.md"
@@ -10,7 +10,10 @@
     "Uses Claw provider/model syntax for Ollama: openai/<ollama-model>",
     "setup.bat refreshes PATH in the current CMD session after installation",
     "full claw.exe fallback path included",
-    "root contains only setup.bat and README.md"
+    "root contains only setup.bat and README.md",
+    "Fixes setup hang after cargo build by replacing Start-Process -Wait with native PowerShell invocation for live-output commands",
+    "Adds clear post-build progress output after cargo finishes",
+    "Adds timeouts to claw verification commands so setup cannot hang silently during version/doctor checks"
   ],
   "auto_model_policy": {
     "vram_under_12gb": "qwen2.5-coder:7b",
@@ -33,8 +36,8 @@
     },
     {
       "name": "tools/Install-ClawCode-Ollama.ps1",
-      "size": 32819,
-      "sha256": "3c48ea9115e9ad2f7a53be209ac1a83f9e8785e9474cebf761c62ee53757302c"
+      "size": 35447,
+      "sha256": "847aa32891369fbeb7d77d74e7145da541cf763d5e6a4a5924e8e39070aa375e"
     },
     {
       "name": "tools/manual-model-setup.bat",

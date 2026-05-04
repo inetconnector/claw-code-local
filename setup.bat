@@ -65,8 +65,18 @@ if "%EXITCODE%"=="0" (
     echo   claw-studio.bat
     echo   Desktop shortcut: Claw Studio
     echo.
+    echo Starting Claw Studio now...
+    if exist "%LOCALAPPDATA%\Programs\ClawCode\bin\claw-studio.bat" (
+        start "" "%LOCALAPPDATA%\Programs\ClawCode\bin\claw-studio.bat"
+        echo [OK] Claw Studio launch requested.
+    ) else (
+        echo [WARN] Claw Studio launcher was not found:
+        echo        %LOCALAPPDATA%\Programs\ClawCode\bin\claw-studio.bat
+    )
+    echo.
     echo Manual Ollama test:
-    echo   "%CLAW_BIN%" --model openai/qwen2.5-coder:14b prompt "Say hello in one short sentence."
+    echo   Use the model shown in the setup summary above, for example:
+    echo   "%CLAW_BIN%" --model openai/qwen2.5-coder:7b prompt "Say hello in one short sentence."
 ) else (
     echo An error occurred. Use this output or the log file for troubleshooting.
 )
