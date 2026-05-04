@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$InstallRoot = "$env:USERPROFILE\source\claw-code",
@@ -41,6 +41,39 @@ function Write-Step {
     param([string]$Message)
     Write-Host ""
     Write-Host "== $Message =="
+}
+
+function Normalize-ProcessPathVariable {
+    $pathValue = [Environment]::GetEnvironmentVariable("Path", "Process")
+    $pathUpperValue = [Environment]::GetEnvironmentVariable("PATH", "Process")
+
+    if ([string]::IsNullOrWhiteSpace($pathValue) -and -not [string]::IsNullOrWhiteSpace($pathUpperValue)) {
+        [Environment]::SetEnvironmentVariable("Path", $pathUpperValue, "Process")
+    }
+
+    # Avoid Start-Process failures when both Path and PATH exist in process env.
+    [Environment]::SetEnvironmentVariable("PATH", $null, "Process")
+}
+
+function Get-FileSha256 {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "File not found: $Path"
+    }
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $hashBytes = $sha.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($hashBytes)).Replace("-", "")
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $sha.Dispose()
+    }
 }
 
 function Test-IsAdmin {
@@ -168,8 +201,7 @@ function Invoke-NativeProcess {
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$Arguments = @(),
         [string]$WorkingDirectory = "",
-        [switch]$AllowFailure,
-        [int]$TimeoutSeconds = 0
+        [switch]$AllowFailure
     )
 
     $resolvedPath = Resolve-NativeCommandPath -FilePath $FilePath
@@ -182,6 +214,7 @@ function Invoke-NativeProcess {
         $startArgs = @{
             FilePath = $resolvedPath
             ArgumentList = $argumentString
+            Wait = $true
             PassThru = $true
             NoNewWindow = $true
             RedirectStandardOutput = $stdoutFile
@@ -193,14 +226,6 @@ function Invoke-NativeProcess {
         }
 
         $process = Start-Process @startArgs
-        if ($TimeoutSeconds -gt 0) {
-            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-                try { $process.Kill() } catch { }
-                throw "Command timed out after $TimeoutSeconds seconds: $FilePath $($Arguments -join ' ')"
-            }
-        } else {
-            $process.WaitForExit()
-        }
         $exitCode = $process.ExitCode
 
         $stdout = @()
@@ -236,10 +261,6 @@ function Invoke-LiveNativeProcess {
         [string]$WorkingDirectory = ""
     )
 
-    # Use PowerShell's native call operator for live-output commands.
-    # Start-Process -Wait can remain attached to child handles on some Windows/cargo
-    # combinations after cargo prints "Finished ...", which makes setup.bat look hung.
-    # The call operator streams output live and returns as soon as the command exits.
     $resolvedPath = Resolve-NativeCommandPath -FilePath $FilePath
     $previousLocation = (Get-Location).Path
 
@@ -267,8 +288,7 @@ function Invoke-External {
         [string]$WorkingDirectory = "",
         [switch]$AllowFailure,
         [switch]$PassThruExitCode,
-        [switch]$LiveOutput,
-        [int]$TimeoutSeconds = 0
+        [switch]$LiveOutput
     )
 
     Write-Info ("Running: {0} {1}" -f $FilePath, ($Arguments -join " "))
@@ -287,16 +307,7 @@ function Invoke-External {
         return
     }
 
-    try {
-        $result = Invoke-NativeProcess -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory -AllowFailure:$AllowFailure -TimeoutSeconds $TimeoutSeconds
-    } catch {
-        if ($AllowFailure) {
-            Write-Warn $_.Exception.Message
-            if ($PassThruExitCode) { return 124 }
-            return
-        }
-        throw
-    }
+    $result = Invoke-NativeProcess -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory -AllowFailure:$AllowFailure
 
     foreach ($line in $result.StdOut) {
         if ($null -ne $line) {
@@ -767,7 +778,6 @@ function Build-ClawCode {
     }
 
     Invoke-External -FilePath "cargo" -Arguments $buildArgs -WorkingDirectory $RustDir -LiveOutput
-    Write-Ok "Cargo build completed. Continuing with post-build setup."
     $Global:BootstrapActions.Add("Built Claw Code workspace") | Out-Null
 
     if ($RunTests) {
@@ -798,8 +808,8 @@ function Install-ClawBinary {
 
     $copyNeeded = $true
     if (Test-Path -LiteralPath $targetBinary) {
-        $sourceHash = (Get-FileHash -LiteralPath $SourceBinary -Algorithm SHA256).Hash
-        $targetHash = (Get-FileHash -LiteralPath $targetBinary -Algorithm SHA256).Hash
+        $sourceHash = Get-FileSha256 -Path $SourceBinary
+        $targetHash = Get-FileSha256 -Path $targetBinary
         if ($sourceHash -eq $targetHash) {
             $copyNeeded = $false
         }
@@ -822,10 +832,6 @@ function Install-ClawStudio {
 
     $sourceStudioScript = Join-Path $PSScriptRoot "ClawStudio.ps1"
     $sourceLauncher = Join-Path $PSScriptRoot "launch-claw-studio.bat"
-    $sourceLauncherVbs = Join-Path $PSScriptRoot "launch-claw-studio.vbs"
-    $sourceNativeProject = Join-Path $PSScriptRoot "ClawStudioApp"
-    $sourceNativeSolution = Join-Path $PSScriptRoot "ClawStudioApp.sln"
-    $sourceNativeLauncher = Join-Path $PSScriptRoot "build-run-claw-studio.bat"
     $sourceIcon = Join-Path $PSScriptRoot "assets\ClawStudio.ico"
 
     if (-not (Test-Path -LiteralPath $sourceStudioScript)) {
@@ -838,11 +844,6 @@ function Install-ClawStudio {
         return
     }
 
-    if (-not (Test-Path -LiteralPath $sourceLauncherVbs)) {
-        Write-Warn "Claw Studio VBS launcher was not found next to the installer. Skipping GUI installation."
-        return
-    }
-
     if (-not (Test-Path -LiteralPath $sourceIcon)) {
         Write-Warn "Claw Studio icon was not found next to the installer. Shortcuts will use the default launcher icon."
     }
@@ -850,15 +851,13 @@ function Install-ClawStudio {
     $studioDir = Join-Path $env:LOCALAPPDATA "Programs\ClawCode\studio"
     $binDir = Join-Path $env:LOCALAPPDATA "Programs\ClawCode\bin"
     $targetStudioScript = Join-Path $studioDir "ClawStudio.ps1"
-    $targetLauncherVbs = Join-Path $studioDir "launch-claw-studio.vbs"
-    $targetNativeProject = Join-Path $studioDir "ClawStudioApp"
-    $targetNativeSolution = Join-Path $studioDir "ClawStudioApp.sln"
-    $targetNativeLauncher = Join-Path $studioDir "build-run-claw-studio.bat"
     $targetIcon = Join-Path $studioDir "ClawStudio.ico"
     $targetLauncher = Join-Path $binDir "claw-studio.bat"
     $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Claw Studio.lnk"
     $programsDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
     $startMenuShortcut = Join-Path $programsDir "Claw Studio.lnk"
+    $cmdTarget = $env:ComSpec
+    $launcherArgument = '/c start "" "%LOCALAPPDATA%\Programs\ClawCode\bin\claw-studio.bat"'
 
     if (-not (Test-Path -LiteralPath $studioDir)) {
         New-Item -ItemType Directory -Path $studioDir -Force | Out-Null
@@ -874,58 +873,8 @@ function Install-ClawStudio {
 
     Copy-Item -LiteralPath $sourceStudioScript -Destination $targetStudioScript -Force
     Copy-Item -LiteralPath $sourceLauncher -Destination $targetLauncher -Force
-    Copy-Item -LiteralPath $sourceLauncherVbs -Destination $targetLauncherVbs -Force
-    if (Test-Path -LiteralPath $sourceNativeProject) {
-        if (Test-Path -LiteralPath $targetNativeProject) { Remove-Item -LiteralPath $targetNativeProject -Recurse -Force }
-        Copy-Item -LiteralPath $sourceNativeProject -Destination $targetNativeProject -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $sourceNativeSolution) {
-        Copy-Item -LiteralPath $sourceNativeSolution -Destination $targetNativeSolution -Force
-    }
-    if (Test-Path -LiteralPath $sourceNativeLauncher) {
-        Copy-Item -LiteralPath $sourceNativeLauncher -Destination $targetNativeLauncher -Force
-    }
     if (Test-Path -LiteralPath $sourceIcon) {
         Copy-Item -LiteralPath $sourceIcon -Destination $targetIcon -Force
-    }
-
-    # Keep the native Visual Studio GUI in sync with the model that setup actually installed.
-    # This prevents an old saved 14b selection from being reused on machines where setup
-    # auto-selected/pulled 7b, which would otherwise produce: model 'qwen2.5-coder:14b' not found.
-    try {
-        $targetSettings = Join-Path $studioDir "settings.json"
-        $studioModel = Get-ClawModelName -OllamaModelName $OllamaModel
-        $settings = $null
-        if (Test-Path -LiteralPath $targetSettings) {
-            try { $settings = Get-Content -LiteralPath $targetSettings -Raw | ConvertFrom-Json } catch { $settings = $null }
-        }
-        if ($null -eq $settings) { $settings = [pscustomobject]@{} }
-
-        function Set-StudioSettingValue {
-            param([object]$Object, [string]$Name, [object]$Value)
-            if ($Object.PSObject.Properties.Name -contains $Name) {
-                $Object.$Name = $Value
-            } else {
-                Add-Member -InputObject $Object -MemberType NoteProperty -Name $Name -Value $Value
-            }
-        }
-
-        Set-StudioSettingValue -Object $settings -Name "ClawPath" -Value (Join-Path $binDir "claw.exe")
-        if (-not ($settings.PSObject.Properties.Name -contains "ProjectPath") -or [string]::IsNullOrWhiteSpace([string]$settings.ProjectPath)) {
-            Set-StudioSettingValue -Object $settings -Name "ProjectPath" -Value ([Environment]::GetFolderPath("UserProfile"))
-        }
-        Set-StudioSettingValue -Object $settings -Name "Model" -Value $studioModel
-        if (-not ($settings.PSObject.Properties.Name -contains "PermissionMode") -or [string]::IsNullOrWhiteSpace([string]$settings.PermissionMode)) {
-            Set-StudioSettingValue -Object $settings -Name "PermissionMode" -Value "workspace-write"
-        }
-        if (-not ($settings.PSObject.Properties.Name -contains "GitRemote")) {
-            Set-StudioSettingValue -Object $settings -Name "GitRemote" -Value ""
-        }
-
-        $settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $targetSettings -Encoding UTF8
-        Write-Ok "Configured Claw Studio model: $studioModel"
-    } catch {
-        Write-Warn "Could not write Claw Studio settings.json: $($_.Exception.Message)"
     }
 
     try {
@@ -933,12 +882,9 @@ function Install-ClawStudio {
 
         foreach ($shortcutPath in @($desktopShortcut, $startMenuShortcut)) {
             $shortcut = $wsh.CreateShortcut($shortcutPath)
-            # Use the visible batch launcher directly. The old wscript-based hidden launcher
-            # made double-click failures look like "nothing happened" because build/runtime
-            # errors were hidden together with the console window.
-            $shortcut.TargetPath = $targetLauncher
-            $shortcut.Arguments = ""
-            $shortcut.WorkingDirectory = $binDir
+            $shortcut.TargetPath = $cmdTarget
+            $shortcut.Arguments = $launcherArgument
+            $shortcut.WorkingDirectory = "%LOCALAPPDATA%\Programs\ClawCode\bin"
             $shortcut.Description = "Launch Claw Studio"
             if (Test-Path -LiteralPath $targetIcon) {
                 $shortcut.IconLocation = $targetIcon
@@ -956,8 +902,7 @@ function Install-ClawStudio {
     }
 
     $Global:BootstrapActions.Add("Installed Claw Studio to $studioDir") | Out-Null
-    Write-Ok "Installed Claw Studio legacy script: $targetStudioScript"
-    Write-Ok "Installed Claw Studio native project: $targetNativeProject"
+    Write-Ok "Installed Claw Studio: $targetStudioScript"
     Write-Ok "Installed launcher: $targetLauncher"
 }
 
@@ -998,14 +943,14 @@ function Verify-Claw {
 
     Write-Step "Verifying Claw Code"
 
-    Invoke-External -FilePath $ClawBinary -Arguments @("--version") -AllowFailure -TimeoutSeconds 20
+    Invoke-External -FilePath $ClawBinary -Arguments @("--version") -AllowFailure
 
     if ($SkipDoctor) {
         Write-Info "Skipping doctor check because -SkipDoctor was provided."
         return
     }
 
-    $doctorExit = Invoke-External -FilePath $ClawBinary -Arguments @("doctor") -AllowFailure -PassThruExitCode -TimeoutSeconds 45
+    $doctorExit = Invoke-External -FilePath $ClawBinary -Arguments @("doctor") -AllowFailure -PassThruExitCode
     if ($doctorExit -ne 0) {
         Write-Warn "claw doctor returned exit code $doctorExit. This is often caused by a missing API key or backend configuration."
     } else {
@@ -1014,7 +959,7 @@ function Verify-Claw {
 
     if ($RunPromptTest -and -not $NoOllama) {
         $clawModel = Get-ClawModelName -OllamaModelName $OllamaModel
-        $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $clawModel, "prompt", "Say hello in one short sentence.") -AllowFailure -PassThruExitCode -TimeoutSeconds 60
+        $promptExit = Invoke-External -FilePath $ClawBinary -Arguments @("--model", $clawModel, "prompt", "Say hello in one short sentence.") -AllowFailure -PassThruExitCode
         if ($promptExit -ne 0) {
             Write-Warn "Ollama prompt test returned exit code $promptExit. Check model name and local Ollama server."
         }
@@ -1069,6 +1014,7 @@ try {
     Write-Host "Use Ollama: $(-not $NoOllama)"
     Write-Host "Requested Ollama model: $OllamaModel"
 
+    Normalize-ProcessPathVariable
     Refresh-CurrentPath
 
     if (-not (Test-IsAdmin)) {

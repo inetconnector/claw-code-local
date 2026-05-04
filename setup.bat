@@ -48,8 +48,6 @@ echo Log file:
 echo %LOGFILE%
 echo ============================================================
 echo.
-echo This window will NOT close automatically.
-echo.
 if "%EXITCODE%"=="0" (
     echo Installation complete.
     echo.
@@ -65,20 +63,14 @@ if "%EXITCODE%"=="0" (
     echo   claw-studio.bat
     echo   Desktop shortcut: Claw Studio
     echo.
-    echo Starting Claw Studio now...
-    if exist "%LOCALAPPDATA%\Programs\ClawCode\bin\claw-studio.bat" (
-        start "" "%LOCALAPPDATA%\Programs\ClawCode\bin\claw-studio.bat"
-        echo [OK] Claw Studio launch requested.
-    ) else (
-        echo [WARN] Claw Studio launcher was not found:
-        echo        %LOCALAPPDATA%\Programs\ClawCode\bin\claw-studio.bat
-    )
-    echo.
     echo Manual Ollama test:
-    echo   Use the model shown in the setup summary above, for example:
-    echo   "%CLAW_BIN%" --model openai/qwen2.5-coder:7b prompt "Say hello in one short sentence."
+    echo   "%CLAW_BIN%" --model openai/qwen2.5-coder:14b prompt "Say hello in one short sentence."
+    echo.
+    echo Setup finished successfully. This window will close automatically.
 ) else (
     echo An error occurred. Use this output or the log file for troubleshooting.
+    echo.
+    echo This window stays open because setup reported an error.
+    echo.
+    cmd /k
 )
-echo.
-cmd /k

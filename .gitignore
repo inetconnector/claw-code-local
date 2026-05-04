@@ -2,45 +2,23 @@
 # Diese .gitignore-Datei wurde von Microsoft(R) Visual Studio automatisch erstellt.
 ################################################################################
 
-# Visual Studio
-/.vs/
-
-# Logs
-/logs/
-
-# Claw
-/.claw/
-
-# Build-Ausgaben
+/.vs
+/logs
+/.claw
+/tools/.vs
+/tmp-e2e-test
+/tmp-e2e-fallback-test
 bin/
 obj/
-
-# Optional: überall im Projekt ignorieren
 **/bin/
 **/obj/
-
-# User-/IDE-Dateien
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
-
-# Visual Studio Code optional
 .vscode/
-
-# Rider / JetBrains optional
 .idea/
-
-# NuGet
-*.nupkg
-packages/
-!packages/build/
-
-# Test Results
 TestResults/
 *.trx
-
-# OS-Dateien
 .DS_Store
 Thumbs.db
-/tools/.vs
